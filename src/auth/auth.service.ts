@@ -3,7 +3,7 @@ import { Injectable, UnauthorizedException, ConflictException, NotFoundException
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { User, UserRole, Language } from '../entities/user.entity';
 import { LogService } from '../log/log.service';
 import { EventType } from '../entities/log.entity';
