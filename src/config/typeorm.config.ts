@@ -1,27 +1,31 @@
-import { DataSource } from 'typeorm';
-import { ConfigService } from '@nestjs/config';
+import { DataSource, DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const configService = new ConfigService();
+const isProd = process.env.NODE_ENV === 'production';
 
-const dbType = configService.get('DB_TYPE') || 'sqlite';
+const options: DataSourceOptions = process.env.DATABASE_URL
+  ? {
+      type: 'postgres',
+      url: process.env.DATABASE_URL,
+      entities: ['dist/**/*.entity.js'],
+      migrations: ['dist/migrations/*.js'],
+      synchronize: false,
+      ssl: isProd ? { rejectUnauthorized: false } : false,
+    }
+  : {
+      type: 'postgres',
+      host: process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
+      username: process.env.DB_USERNAME || 'postgres',
+      password: process.env.DB_PASSWORD || '',
+      database: process.env.DB_NAME || 'postgres',
+      entities: ['dist/**/*.entity.js'],
+      migrations: ['dist/migrations/*.js'],
+      synchronize: false,
+      ssl: isProd ? { rejectUnauthorized: false } : false,
+    };
 
-const config: any = {
-  type: dbType,
-  database: configService.get('DB_DATABASE') || 'masmercat.db',
-  entities: ['src/entities/**/*.entity.ts'],
-  migrations: ['src/migrations/**/*.ts'],
-  synchronize: true,
-  logging: configService.get('NODE_ENV') === 'development'
-};
-
-if (dbType === 'postgres') {
-  config.host = configService.get('DATABASE_HOST');
-  config.port = parseInt(configService.get('DATABASE_PORT') || '5432');
-  config.username = configService.get('DATABASE_USER');
-  config.password = configService.get('DATABASE_PASSWORD');
-}
-
-export default new DataSource(config);
+export const AppDataSource = new DataSource(options);
+export default AppDataSource;
