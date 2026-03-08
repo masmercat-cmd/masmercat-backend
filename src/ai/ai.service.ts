@@ -176,7 +176,6 @@ Identifica:
 3. Cantidad aproximada de frutas
 4. Peso estimado total en kg
 5. Calidad (extra, primera, segunda)
-`,
 
 Responde SOLO en JSON con estas claves:
 {
@@ -185,7 +184,8 @@ Responde SOLO en JSON con estas claves:
   "cantidad_aprox": 80,
   "peso_estimado_kg": 18,
   "calidad": "extra/primera/segunda"
-}`,
+}
+`,
 
     en: `Analyze this fruit image. Identify:
 1. Fruit type
