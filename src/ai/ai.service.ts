@@ -160,6 +160,10 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
     es: `Analiza esta imagen de frutas. 
 
 Usa terminología agrícola de España para los nombres de frutas.
+
+IMPORTANTE:
+Si la fruta es "durazno", debes devolver "melocotón".
+
 Ejemplos:
 - durazno = melocotón
 - frutilla = fresa
@@ -173,7 +177,6 @@ Identifica:
 4. Peso estimado total en kg
 5. Calidad (extra, primera, segunda)
 `,
-};
 
 Responde SOLO en JSON con estas claves:
 {
