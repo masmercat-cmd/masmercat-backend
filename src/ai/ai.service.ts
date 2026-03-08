@@ -157,12 +157,23 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
   img = img.replace(/^data:image\/\w+;base64,/, '');
 
   const prompts: any = {
-    es: `Analiza esta imagen de frutas. Identifica:
+    es: `Analiza esta imagen de frutas. 
+
+Usa terminología agrícola de España para los nombres de frutas.
+Ejemplos:
+- durazno = melocotón
+- frutilla = fresa
+- palta = aguacate
+- ananá = piña
+
+Identifica:
 1. Tipo de fruta
 2. Calibre aproximado (1, 2, 3, A, B)
 3. Cantidad aproximada de frutas
 4. Peso estimado total en kg
 5. Calidad (extra, primera, segunda)
+`,
+};
 
 Responde SOLO en JSON con estas claves:
 {
