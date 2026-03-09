@@ -211,7 +211,7 @@ Responde SOLO en JSON con estas claves:
 }
   ,
 
-    en: `Analyze this fruit image. Identify:
+en: `Analyze this fruit image. Identify:
 1. Fruit type
 2. Approximate size (1, 2, 3, A, B)
 3. Approximate quantity
@@ -249,14 +249,18 @@ Respond ONLY in JSON with these keys:
       role: 'user',
       content: [
         { type: 'text', text: prompt },
-        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img} } },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:image/jpeg;base64,${img}`,
+          },
+        },
       ],
     },
   ],
   max_tokens: 300,
   temperature: 0,
 });
-
     console.timeEnd('openai_attempt_A');
     console.log('✅ OpenAI respondió (attempt A)');
 
