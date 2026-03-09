@@ -209,7 +209,7 @@ Responde SOLO en JSON con estas claves:
   "peso_estimado_kg": 0,
   "calidad": "extra/primera/segunda"
 }
-,
+  ,
 
     en: `Analyze this fruit image. Identify:
 1. Fruit type
