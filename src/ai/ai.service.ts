@@ -157,7 +157,7 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
   img = img.replace(/^data:image\/\w+;base64,/, '');
 
   const prompts: any = {
-    es: `Analiza esta imagen de frutas. 
+    es: `Analiza esta imagen de frutas o verduras. 
 
 Usa terminología agrícola de España para los nombres de frutas.
 
@@ -208,10 +208,11 @@ Responde SOLO en JSON con estas claves:
   "calibre": "1/2/3/4/5/6/A/B",
   "peso_estimado_kg": 0,
   "calidad": "extra/primera/segunda"
-}
-  ,
+}`,
 
-en: `Analyze this fruit image. Identify:
+en: `Analyze this fruit or vegetable image.
+
+Identify:
 1. Fruit type
 2. Approximate size (1, 2, 3, A, B)
 3. Approximate quantity
@@ -225,8 +226,7 @@ Respond ONLY in JSON with these keys:
   "cantidad_aprox": 80,
   "peso_estimado_kg": 18,
   "calidad": "extra/first/second"
-}
-`,
+}`
 };
 
   const lang = (language || 'es').substring(0, 2);
