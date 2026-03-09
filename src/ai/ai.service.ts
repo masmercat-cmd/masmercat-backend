@@ -164,28 +164,52 @@ Usa terminología agrícola de España para los nombres de frutas.
 IMPORTANTE:
 Si la fruta es "durazno", debes devolver "melocotón".
 
+Identifica:
+
+1. Categoría del producto (fruta o verdura)
+2. Producto específico (melocotón, kiwi, berenjena, etc.)
+3. Tipo de envase detectado:
+   - caja
+   - varias cajas
+   - palet con cajas
+   - palot
+
+4. Si es palet o varias cajas:
+   - número aproximado de cajas
+   - piezas aproximadas por caja
+   - total estimado de piezas
+
+5. Si es palot:
+   - estimar peso aproximado del palot lleno
+
+6. Calibre aproximado (1, 2, 3, 4, 5, 6, A, B si aplica)
+
+7. Peso estimado total en kg basado en:
+   - tipo de envase
+   - número de cajas o palots
+   - peso típico por caja
+
+8. Calidad visual aproximada (extra, primera, segunda)
+
 Ejemplos:
 - durazno = melocotón
 - frutilla = fresa
 - palta = aguacate
 - ananá = piña
 
-Identifica:
-1. Tipo de fruta
-2. Calibre aproximado (1, 2, 3, A, B)
-3. Cantidad aproximada de frutas
-4. Peso estimado total en kg
-5. Calidad (extra, primera, segunda)
-
 Responde SOLO en JSON con estas claves:
 {
-  "fruta": "naranja/limón/etc",
-  "calibre": "1/2/3/A/B",
-  "cantidad_aprox": 80,
-  "peso_estimado_kg": 18,
+  "categoria": "fruta/verdura",
+  "producto": "melocoton/kiwi/berenjena/etc",
+  "envase": "caja/palet/palot",
+  "cajas_aprox": 0,
+  "piezas_por_caja": 0,
+  "cantidad_aprox": 0,
+  "calibre": "1/2/3/4/5/6/A/B",
+  "peso_estimado_kg": 0,
   "calidad": "extra/primera/segunda"
 }
-`,
+,
 
     en: `Analyze this fruit image. Identify:
 1. Fruit type
