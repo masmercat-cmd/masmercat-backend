@@ -225,8 +225,9 @@ Respond ONLY in JSON with these keys:
   "cantidad_aprox": 80,
   "peso_estimado_kg": 18,
   "calidad": "extra/first/second"
-}`,
-  };
+}
+`,
+};
 
   const lang = (language || 'es').substring(0, 2);
   const prompt = prompts[lang] || prompts.es;
