@@ -242,20 +242,20 @@ Respond ONLY in JSON with these keys:
     console.time('openai_attempt_A');
 
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-4o',
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img}` } },
-          ],
-        },
+    model: 'gpt-4o',
+    response_format: { type: 'json_object' },
+    messages: [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img} } },
       ],
-      max_tokens: 300,
-      temperature: 0,
-    });
+    },
+  ],
+  max_tokens: 300,
+  temperature: 0,
+});
 
     console.timeEnd('openai_attempt_A');
     console.log('✅ OpenAI respondió (attempt A)');
