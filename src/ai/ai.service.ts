@@ -157,17 +157,22 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
   img = img.replace(/^data:image\/\w+;base64,/, '');
 
   const prompts: any = {
-    es: `Analiza esta imagen de frutas o verduras. 
+    es: `Analiza esta imagen de frutas o verduras.
 
 Usa terminología agrícola de España para los nombres de frutas.
 
 IMPORTANTE:
-Si la fruta es "durazno", debes devolver "melocotón".
+Distingue correctamente entre estos productos:
+- melocotón = fruta redonda con piel aterciopelada
+- paraguayo = melocotón plano
+- nectarina = fruta redonda con piel lisa
+
+Si identificas "durazno", debes devolver "melocotón".
 
 Identifica:
 
-1. Categoría del producto (fruta o verdura)
-2. Producto específico (melocotón, kiwi, berenjena, etc.)
+1. Categoría del producto (fruta, verdura o hongo)
+2. Producto específico (melocotón, paraguayo, nectarina, kiwi, berenjena, trufa, etc.)
 3. Tipo de envase detectado:
    - caja
    - varias cajas
@@ -199,9 +204,9 @@ Ejemplos:
 
 Responde SOLO en JSON con estas claves:
 {
-  "categoria": "fruta/verdura",
-  "producto": "melocoton/kiwi/berenjena/etc",
-  "envase": "caja/palet/palot",
+  "categoria": "fruta/verdura/hongo",
+  "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",
+  "envase": "caja/varias cajas/palet con cajas/palot",
   "cajas_aprox": 0,
   "piezas_por_caja": 0,
   "cantidad_aprox": 0,
