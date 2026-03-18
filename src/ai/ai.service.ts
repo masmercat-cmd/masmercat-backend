@@ -169,32 +169,88 @@ Distingue correctamente entre estos productos:
 
 Si identificas "durazno", debes devolver "melocotón".
 
+Objetivo:
+Debes analizar el lote de forma visual y estructurada. No des una cifra simple sin justificarla visualmente.
+
 Identifica:
 
-1. Categoría del producto (fruta, verdura o hongo)
-2. Producto específico (melocotón, paraguayo, nectarina, kiwi, berenjena, trufa, etc.)
+1. Categoría del producto:
+   - fruta
+   - verdura
+   - hongo
+
+2. Producto específico:
+   - melocotón
+   - paraguayo
+   - nectarina
+   - kiwi
+   - berenjena
+   - trufa
+   - etc.
+
 3. Tipo de envase detectado:
    - caja
    - varias cajas
    - palet con cajas
    - palot
 
-4. Si es palet o varias cajas:
-   - número aproximado de cajas
-   - piezas aproximadas por caja
-   - total estimado de piezas
+4. Material del envase o caja si se aprecia:
+   - cartón
+   - madera
+   - plástico
+   - desconocido4
 
-5. Si es palot:
-   - estimar peso aproximado del palot lleno
+5. Si el envase es "palet con cajas", analiza así:
+   - cuenta columnas visibles en la cara frontal
+   - cuenta filas o niveles visibles en altura
+   - cuenta columnas o filas visibles en la cara lateral si se aprecia
+   - estima la profundidad real del palet usando la cara lateral y/o la parte superior visible
+   - detecta si hay cajas adicionales colocadas arriba
+   - calcula una estimación total realista del palet completo, no solo de la cara frontal
 
-6. Calibre aproximado (1, 2, 3, 4, 5, 6, A, B si aplica)
+Reglas para palet con cajas:
+- NO devuelvas solo las cajas visibles de frente si se aprecia claramente profundidad o lateral.
+- Si se ven dos caras del palet, usa ambas para estimar el volumen real.
+- Prioriza frente × profundidad × altura cuando sea visualmente coherente.
+- Si la parte superior ayuda a ver la profundidad, úsala como apoyo, pero no como única referencia.
+- Si hay cajas sueltas arriba, súmalas por separado en cajas_superiores.
+- cajas_estimadas debe ser el total estimado completo del palet.
+- Evita subestimar palets altos o con doble cara visible.
+- Si no puedes medir con precisión, estima de forma conservadora pero coherente.
+- Si hay duda, usa confianza "media" o "baja".
 
-7. Peso estimado total en kg basado en:
+6. Si es palot:
+   - estima el peso aproximado del palot lleno
+
+7. Calibre aproximado:
+   - 1, 2, 3, 4, 5, 6, A, B si aplica
+
+8. Piezas por caja:
+   - estima piezas_por_caja si se puede
+   - si no se puede, usa un valor razonable según el tamaño visual del fruto
+
+9. Cantidad total:
+   - calcula cantidad_total_piezas = cajas_estimadas × piezas_por_caja cuando aplique
+
+10. Peso estimado total en kg basado en:
    - tipo de envase
-   - número de cajas o palots
+   - número estimado de cajas o palots
    - peso típico por caja
+   - tamaño visual del producto
 
-8. Calidad visual aproximada (extra, primera, segunda)
+11. Calidad visual aproximada:
+   - extra
+   - primera
+   - segunda
+
+12. Medidas de caja:
+   - si pueden inferirse con bastante seguridad, devuelve algo como "60x40 cm aprox"
+   - si no es fiable, devuelve "por confirmar"
+
+13. Confianza de la estimación:
+   - alta
+   - media
+   - baja
 
 Ejemplos:
 - durazno = melocotón
@@ -202,17 +258,25 @@ Ejemplos:
 - palta = aguacate
 - ananá = piña
 
-Responde SOLO en JSON con estas claves:
+Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
 {
   "categoria": "fruta/verdura/hongo",
   "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",
   "envase": "caja/varias cajas/palet con cajas/palot",
-  "cajas_aprox": 0,
+  "material_caja": "carton/madera/plastico/desconocido",
+  "columnas_visibles": 0,
+  "filas_visibles": 0,
+  "cajas_por_capa": 0,
+  "capas_estimadas": 0,
+  "cajas_superiores": 0,
+  "cajas_estimadas": 0,
   "piezas_por_caja": 0,
-  "cantidad_aprox": 0,
+  "cantidad_total_piezas": 0,
   "calibre": "1/2/3/4/5/6/A/B",
   "peso_estimado_kg": 0,
-  "calidad": "extra/primera/segunda"
+  "calidad": "extra/primera/segunda",
+  "medidas_caja": "por confirmar",
+  "confianza_estimacion": "alta/media/baja"
 }`,
 
 en: `Analyze this fruit or vegetable image.
@@ -228,7 +292,7 @@ Respond ONLY in JSON with these keys:
 {
   "fruta": "orange/lemon/etc",
   "calibre": "1/2/3/A/B",
-  "cantidad_aprox": 80,
+  "cantidad_total_piezas": 80,
   "peso_estimado_kg": 18,
   "calidad": "extra/first/second"
 }`
@@ -271,7 +335,8 @@ Respond ONLY in JSON with these keys:
 
     const response = completion.choices[0]?.message?.content || '{}';
     console.log('📨 OpenAI content (attempt A):', response);
-
+    console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
+    
     return JSON.parse(response);
   } catch (error: any) {
     console.error('❌ Vision attempt A (data URL) error:', error?.message || error);

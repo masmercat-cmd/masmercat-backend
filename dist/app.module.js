@@ -31,10 +31,24 @@ exports.AppModule = AppModule = __decorate([
             typeorm_1.TypeOrmModule.forRootAsync({
                 imports: [config_1.ConfigModule],
                 useFactory: (configService) => {
+                    const databaseUrl = configService.get('DATABASE_URL');
+                    if (databaseUrl) {
+                        return {
+                            type: 'postgres',
+                            url: databaseUrl,
+                            entities: [__dirname + '/**/*.entity{.ts,.js}'],
+                            synchronize: true,
+                            ssl: {
+                                rejectUnauthorized: false,
+                            },
+                        };
+                    }
                     const dbType = configService.get('DB_TYPE') || 'sqlite';
                     const config = {
                         type: dbType,
-                        database: dbType === 'postgres' ? configService.get('DATABASE_NAME') : configService.get('DB_DATABASE'),
+                        database: dbType === 'postgres'
+                            ? configService.get('DATABASE_NAME')
+                            : 'masmercat.db',
                         entities: [__dirname + '/**/*.entity{.ts,.js}'],
                         synchronize: true,
                         logging: configService.get('NODE_ENV') === 'development',

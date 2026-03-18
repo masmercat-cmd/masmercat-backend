@@ -146,22 +146,130 @@ Responda de maneira amigável, concisa e profissional em português.`,
         let img = (base64Image || '').trim();
         img = img.replace(/^data:image\/\w+;base64,/, '');
         const prompts = {
-            es: `Analiza esta imagen de frutas. Identifica:
-1. Tipo de fruta
-2. Calibre aproximado (1, 2, 3, A, B)
-3. Cantidad aproximada de frutas
-4. Peso estimado total en kg
-5. Calidad (extra, primera, segunda)
+            es: `Analiza esta imagen de frutas o verduras.
 
-Responde SOLO en JSON con estas claves:
+Usa terminología agrícola de España para los nombres de frutas.
+
+IMPORTANTE:
+Distingue correctamente entre estos productos:
+- melocotón = fruta redonda con piel aterciopelada
+- paraguayo = melocotón plano
+- nectarina = fruta redonda con piel lisa
+
+Si identificas "durazno", debes devolver "melocotón".
+
+Objetivo:
+Debes analizar el lote de forma visual y estructurada. No des una cifra simple sin justificarla visualmente.
+
+Identifica:
+
+1. Categoría del producto:
+   - fruta
+   - verdura
+   - hongo
+
+2. Producto específico:
+   - melocotón
+   - paraguayo
+   - nectarina
+   - kiwi
+   - berenjena
+   - trufa
+   - etc.
+
+3. Tipo de envase detectado:
+   - caja
+   - varias cajas
+   - palet con cajas
+   - palot
+
+4. Material del envase o caja si se aprecia:
+   - cartón
+   - madera
+   - plástico
+   - desconocido4
+
+5. Si el envase es "palet con cajas", analiza así:
+   - cuenta columnas visibles en la cara frontal
+   - cuenta filas o niveles visibles en altura
+   - cuenta columnas o filas visibles en la cara lateral si se aprecia
+   - estima la profundidad real del palet usando la cara lateral y/o la parte superior visible
+   - detecta si hay cajas adicionales colocadas arriba
+   - calcula una estimación total realista del palet completo, no solo de la cara frontal
+
+Reglas para palet con cajas:
+- NO devuelvas solo las cajas visibles de frente si se aprecia claramente profundidad o lateral.
+- Si se ven dos caras del palet, usa ambas para estimar el volumen real.
+- Prioriza frente × profundidad × altura cuando sea visualmente coherente.
+- Si la parte superior ayuda a ver la profundidad, úsala como apoyo, pero no como única referencia.
+- Si hay cajas sueltas arriba, súmalas por separado en cajas_superiores.
+- cajas_estimadas debe ser el total estimado completo del palet.
+- Evita subestimar palets altos o con doble cara visible.
+- Si no puedes medir con precisión, estima de forma conservadora pero coherente.
+- Si hay duda, usa confianza "media" o "baja".
+
+6. Si es palot:
+   - estima el peso aproximado del palot lleno
+
+7. Calibre aproximado:
+   - 1, 2, 3, 4, 5, 6, A, B si aplica
+
+8. Piezas por caja:
+   - estima piezas_por_caja si se puede
+   - si no se puede, usa un valor razonable según el tamaño visual del fruto
+
+9. Cantidad total:
+   - calcula cantidad_total_piezas = cajas_estimadas × piezas_por_caja cuando aplique
+
+10. Peso estimado total en kg basado en:
+   - tipo de envase
+   - número estimado de cajas o palots
+   - peso típico por caja
+   - tamaño visual del producto
+
+11. Calidad visual aproximada:
+   - extra
+   - primera
+   - segunda
+
+12. Medidas de caja:
+   - si pueden inferirse con bastante seguridad, devuelve algo como "60x40 cm aprox"
+   - si no es fiable, devuelve "por confirmar"
+
+13. Confianza de la estimación:
+   - alta
+   - media
+   - baja
+
+Ejemplos:
+- durazno = melocotón
+- frutilla = fresa
+- palta = aguacate
+- ananá = piña
+
+Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
 {
-  "fruta": "naranja/limón/etc",
-  "calibre": "1/2/3/A/B",
-  "cantidad_aprox": 80,
-  "peso_estimado_kg": 18,
-  "calidad": "extra/primera/segunda"
+  "categoria": "fruta/verdura/hongo",
+  "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",
+  "envase": "caja/varias cajas/palet con cajas/palot",
+  "material_caja": "carton/madera/plastico/desconocido",
+  "columnas_visibles": 0,
+  "filas_visibles": 0,
+  "cajas_por_capa": 0,
+  "capas_estimadas": 0,
+  "cajas_superiores": 0,
+  "cajas_estimadas": 0,
+  "piezas_por_caja": 0,
+  "cantidad_total_piezas": 0,
+  "calibre": "1/2/3/4/5/6/A/B",
+  "peso_estimado_kg": 0,
+  "calidad": "extra/primera/segunda",
+  "medidas_caja": "por confirmar",
+  "confianza_estimacion": "alta/media/baja"
 }`,
-            en: `Analyze this fruit image. Identify:
+            en: `Analyze this fruit or vegetable image.
+
+Identify:
 1. Fruit type
 2. Approximate size (1, 2, 3, A, B)
 3. Approximate quantity
@@ -172,10 +280,10 @@ Respond ONLY in JSON with these keys:
 {
   "fruta": "orange/lemon/etc",
   "calibre": "1/2/3/A/B",
-  "cantidad_aprox": 80,
+  "cantidad_total_piezas": 80,
   "peso_estimado_kg": 18,
   "calidad": "extra/first/second"
-}`,
+}`
         };
         const lang = (language || 'es').substring(0, 2);
         const prompt = prompts[lang] || prompts.es;
@@ -193,7 +301,12 @@ Respond ONLY in JSON with these keys:
                         role: 'user',
                         content: [
                             { type: 'text', text: prompt },
-                            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img}` } },
+                            {
+                                type: 'image_url',
+                                image_url: {
+                                    url: `data:image/jpeg;base64,${img}`,
+                                },
+                            },
                         ],
                     },
                 ],
@@ -204,6 +317,7 @@ Respond ONLY in JSON with these keys:
             console.log('✅ OpenAI respondió (attempt A)');
             const response = completion.choices[0]?.message?.content || '{}';
             console.log('📨 OpenAI content (attempt A):', response);
+            console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
             return JSON.parse(response);
         }
         catch (error) {

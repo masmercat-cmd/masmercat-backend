@@ -33,25 +33,32 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.AppDataSource = void 0;
 const typeorm_1 = require("typeorm");
-const config_1 = require("@nestjs/config");
 const dotenv = __importStar(require("dotenv"));
 dotenv.config();
-const configService = new config_1.ConfigService();
-const dbType = configService.get('DB_TYPE') || 'sqlite';
-const config = {
-    type: dbType,
-    database: configService.get('DB_DATABASE') || 'masmercat.db',
-    entities: ['src/entities/**/*.entity.ts'],
-    migrations: ['src/migrations/**/*.ts'],
-    synchronize: true,
-    logging: configService.get('NODE_ENV') === 'development'
-};
-if (dbType === 'postgres') {
-    config.host = configService.get('DATABASE_HOST');
-    config.port = parseInt(configService.get('DATABASE_PORT') || '5432');
-    config.username = configService.get('DATABASE_USER');
-    config.password = configService.get('DATABASE_PASSWORD');
-}
-exports.default = new typeorm_1.DataSource(config);
+const isProd = process.env.NODE_ENV === 'production';
+const options = process.env.DATABASE_URL
+    ? {
+        type: 'postgres',
+        url: process.env.DATABASE_URL,
+        entities: ['dist/**/*.entity.js'],
+        migrations: ['dist/migrations/*.js'],
+        synchronize: false,
+        ssl: isProd ? { rejectUnauthorized: false } : false,
+    }
+    : {
+        type: 'postgres',
+        host: process.env.DB_HOST || 'localhost',
+        port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
+        username: process.env.DB_USERNAME || 'postgres',
+        password: process.env.DB_PASSWORD || '',
+        database: process.env.DB_NAME || 'postgres',
+        entities: ['dist/**/*.entity.js'],
+        migrations: ['dist/migrations/*.js'],
+        synchronize: false,
+        ssl: isProd ? { rejectUnauthorized: false } : false,
+    };
+exports.AppDataSource = new typeorm_1.DataSource(options);
+exports.default = exports.AppDataSource;
 //# sourceMappingURL=typeorm.config.js.map

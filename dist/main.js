@@ -33,32 +33,20 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-require("dotenv/config");
 const core_1 = require("@nestjs/core");
-const common_1 = require("@nestjs/common");
 const app_module_1 = require("./app.module");
-const config_1 = require("@nestjs/config");
 const bodyParser = __importStar(require("body-parser"));
 async function bootstrap() {
-    const app = await core_1.NestFactory.create(app_module_1.AppModule, {
-        logger: ['error', 'warn', 'log', 'debug', 'verbose'],
-    });
-    const configService = app.get(config_1.ConfigService);
-    app.use(bodyParser.json({ limit: '50mb' }));
-    app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+    const app = await core_1.NestFactory.create(app_module_1.AppModule);
+    app.use(bodyParser.json({ limit: '10mb' }));
+    app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
     app.enableCors({
-        origin: '*',
+        origin: true,
         credentials: true,
     });
-    app.useGlobalPipes(new common_1.ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-    }));
-    app.setGlobalPrefix('api');
-    const port = configService.get('PORT') || 3000;
+    const port = process.env.PORT ? Number(process.env.PORT) : 3000;
     await app.listen(port, '0.0.0.0');
-    console.log(`🚀 MasMercat Backend running on port ${port}`);
+    console.log(`Server running on port ${port}`);
 }
 bootstrap();
 //# sourceMappingURL=main.js.map
