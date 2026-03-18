@@ -129,7 +129,8 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
         max_tokens: 500,
       });
 
-      return completion.choices[0]?.message?.content || '';
+      
+ completion.choices[0]?.message?.content || '';
     } catch (error: any) {
       console.error('❌ OpenAI chat error:', error?.message || error);
       console.error('❌ details:', error?.response?.data || error?.response || error);
@@ -349,7 +350,30 @@ Respond ONLY in JSON with these keys:
     console.log('📨 OpenAI content (attempt A):', response);
     console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
     
-    return JSON.parse(response);
+    const parsed = JSON.parse(response);
+
+let cajas =
+  parsed.cajas_estimadas ??
+  parsed.cajas_aprox ??
+  0;
+
+if (parsed.envase === 'palet con cajas' && cajas < 50) {
+  cajas = cajas * 4;
+}
+
+if (parsed.envase === 'palet con cajas' && cajas < 50) {
+  cajas = 80;
+}
+
+parsed.cajas_estimadas = cajas;
+parsed.cajas_aprox = cajas;
+
+if (parsed.piezas_por_caja) {
+  parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
+  parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
+}
+
+return parsed;
   } catch (error: any) {
     console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
     console.error('❌ details:', error?.response?.data || error?.response || error);
@@ -374,7 +398,30 @@ Respond ONLY in JSON with these keys:
     });
 
     const response = completion.choices[0]?.message?.content || '{}';
-    return JSON.parse(response);
+    const parsed = JSON.parse(response);
+
+    let cajas =
+      parsed.cajas_estimadas ??
+      parsed.cajas_aprox ??
+      0;
+
+    if (parsed.envase === 'palet con cajas' && cajas < 50) {
+      cajas = cajas * 4;
+    }
+
+    if (parsed.envase === 'palet con cajas' && cajas < 50) {
+      cajas = 80;
+    }
+
+    parsed.cajas_estimadas = cajas;
+    parsed.cajas_aprox = cajas;
+
+    if (parsed.piezas_por_caja) {
+      parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
+      parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
+    }
+
+return parsed;		
   } catch (error: any) {
     console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
     console.error('❌ details:', error?.response?.data || error?.response || error);
