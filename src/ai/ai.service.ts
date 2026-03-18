@@ -201,6 +201,14 @@ Identifica:
    - desconocido4
 
 5. Si el envase es "palet con cajas", analiza así:
+- SIEMPRE estima el total del palet completo, no solo lo visible de frente
+- Si hay varias capas en profundidad, multiplícalas
+- Si hay cajas encima, súmalas aparte
+- Si dudas entre varios valores, elige el MAYOR coherente
+- NUNCA devuelvas solo la cara frontal
+
+El valor de "cajas_estimadas" debe representar el TOTAL REAL del palet completo.
+Ejemplo: si ves 6x4 cajas delante y estimas 3 capas → devuelve ~72, no 24.
 
 - cuenta columnas visibles en la cara frontal
 - cuenta filas visibles en altura (niveles)
