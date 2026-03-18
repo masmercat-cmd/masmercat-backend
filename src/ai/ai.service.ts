@@ -201,23 +201,25 @@ Identifica:
    - desconocido4
 
 5. Si el envase es "palet con cajas", analiza así:
-   - cuenta columnas visibles en la cara frontal
-   - cuenta filas o niveles visibles en altura
-   - cuenta columnas o filas visibles en la cara lateral si se aprecia
-   - estima la profundidad real del palet usando la cara lateral y/o la parte superior visible
-   - detecta si hay cajas adicionales colocadas arriba
-   - calcula una estimación total realista del palet completo, no solo de la cara frontal
 
-Reglas para palet con cajas:
-- NO devuelvas solo las cajas visibles de frente si se aprecia claramente profundidad o lateral.
-- Si se ven dos caras del palet, usa ambas para estimar el volumen real.
-- Prioriza frente × profundidad × altura cuando sea visualmente coherente.
-- Si la parte superior ayuda a ver la profundidad, úsala como apoyo, pero no como única referencia.
-- Si hay cajas sueltas arriba, súmalas por separado en cajas_superiores.
-- cajas_estimadas debe ser el total estimado completo del palet.
-- Evita subestimar palets altos o con doble cara visible.
-- Si no puedes medir con precisión, estima de forma conservadora pero coherente.
-- Si hay duda, usa confianza "media" o "baja".
+- cuenta columnas visibles en la cara frontal
+- cuenta filas visibles en altura (niveles)
+- identifica si hay profundidad (segunda fila o cara lateral visible)
+- asume profundidad mínima de 1, pero aumenta si se ve lateral o volumen
+
+Debes calcular SIEMPRE con fórmula:
+
+- cajas_frente = columnas × filas
+- profundidad = número de filas hacia atrás (mínimo 1)
+- cajas_totales = cajas_frente × profundidad
+
+IMPORTANTE:
+- NO devuelvas solo las cajas visibles de frente
+- SIEMPRE estima volumen completo del palet
+- Si se ve lateral o parte superior, aumenta profundidad
+- Si el palet es alto, aumenta filas
+- Si parece lleno, evita números bajos
+- Es mejor aproximar alto que quedarse corto
 
 6. Si es palot:
    - estima el peso aproximado del palot lleno
