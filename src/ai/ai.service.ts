@@ -287,8 +287,12 @@ Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
   "cantidad_aprox": 0,
   "calibre": "1/2/3/4/5/6/A/B",
   "peso_estimado_kg": 0,
+  "tara_kg": 0,
+  "peso_neto_kg": 0,
+  "numero_palets": 0,
   "calidad": "extra/primera/segunda",
   "medidas_caja": "por confirmar",
+  "medidas_palet": "por confirmar",
   "confianza_estimacion": "alta/media/baja"
 }`,
 
@@ -373,6 +377,54 @@ if (parsed.piezas_por_caja) {
   parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
 }
 
+const pesoPorCaja = 5;
+const taraPorCaja = 0.5;
+
+let taraPalet = 0;
+if (parsed.envase === 'palet con cajas') {
+  taraPalet = 20;
+}
+
+const pesoBruto = cajas * pesoPorCaja;
+const tara = cajas * taraPorCaja + taraPalet;
+const pesoNeto = pesoBruto - tara;
+
+parsed.peso_estimado_kg = pesoBruto;
+parsed.tara_kg = tara;
+parsed.peso_neto_kg = pesoNeto;
+
+parsed.numero_palets =
+  parsed.envase === 'palet con cajas' ? 1 : 0;
+
+const pesoPorCaja = 5;
+const taraPorCaja = 0.5;
+
+let taraPalet = 0;
+if (parsed.envase === 'palet con cajas') {
+  taraPalet = 20;
+}
+
+const pesoBruto = cajas * pesoPorCaja;
+const tara = cajas * taraPorCaja + taraPalet;
+const pesoNeto = pesoBruto - tara;
+
+parsed.peso_estimado_kg = pesoBruto;
+parsed.tara_kg = tara;
+parsed.peso_neto_kg = pesoNeto;
+
+parsed.numero_palets =
+  parsed.envase === 'palet con cajas' ? 1 : 0;
+
+if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
+  parsed.medidas_caja = '60x40 cm aprox';
+}
+
+if (parsed.envase === 'palet con cajas') {
+  parsed.medidas_palet = '120x80 cm aprox';
+} else if (!parsed.medidas_palet) {
+  parsed.medidas_palet = 'por confirmar';
+}
+
 return parsed;
   } catch (error: any) {
     console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
@@ -417,9 +469,38 @@ return parsed;
     parsed.cajas_aprox = cajas;
 
     if (parsed.piezas_por_caja) {
-      parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
-      parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
-    }
+  parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
+  parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
+}
+
+const pesoPorCaja = 5;
+const taraPorCaja = 0.5;
+
+let taraPalet = 0;
+if (parsed.envase === 'palet con cajas') {
+  taraPalet = 20;
+}
+
+const pesoBruto = cajas * pesoPorCaja;
+const tara = cajas * taraPorCaja + taraPalet;
+const pesoNeto = pesoBruto - tara;
+
+parsed.peso_estimado_kg = pesoBruto;
+parsed.tara_kg = tara;
+parsed.peso_neto_kg = pesoNeto;
+
+parsed.numero_palets =
+  parsed.envase === 'palet con cajas' ? 1 : 0;
+
+if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
+  parsed.medidas_caja = '60x40 cm aprox';
+}
+
+if (parsed.envase === 'palet con cajas') {
+  parsed.medidas_palet = '120x80 cm aprox';
+} else if (!parsed.medidas_palet) {
+  parsed.medidas_palet = 'por confirmar';
+}
 
 return parsed;		
   } catch (error: any) {
