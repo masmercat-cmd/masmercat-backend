@@ -477,10 +477,12 @@ const pesoPorCaja = 5;
 const taraPorCaja = 0.5;
 
 let taraPalet = 0;
-if (parsed.envase === 'palet con cajas') {
+
+const envase = (parsed.envase || '').toLowerCase();
+
+if (envase.includes('palet')) {
   taraPalet = 20;
 }
-
 const pesoBruto = cajas * pesoPorCaja;
 const tara = cajas * taraPorCaja + taraPalet;
 const pesoNeto = pesoBruto - tara;
