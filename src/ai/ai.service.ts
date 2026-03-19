@@ -451,23 +451,21 @@ let taraPalet = 0;
 
 const envase = (parsed.envase || '').toLowerCase();
 
-if (envase.includes('palet')) {
-  taraPalet = 20;
-  parsed.numero_palets = 1;
+// Número de palets
+parsed.numero_palets = envase.includes('palet') ? 1 : 0;
+
+// MEDIDAS CAJA
+if (envase.includes('caja')) {
   parsed.medidas_caja = '60x40 cm aprox';
-  parsed.medidas_palet = '120x80 cm aprox';
 } else {
-  parsed.numero_palets = 0;
+  parsed.medidas_caja = 'por confirmar';
+}
 
-  if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
-    if (envase.includes('caja')) {
-      parsed.medidas_caja = '60x40 cm aprox';
-    } else {
-       parsed.medidas_caja = 'por confirmar';
-    }
-  }
-
-       parsed.medidas_palet = 'no aplica';
+// MEDIDAS PALET
+if (envase.includes('palet')) {
+  parsed.medidas_palet = 'Europalet (120x80 cm aprox)';
+} else {
+  parsed.medidas_palet = 'no aplica';
 }
 
 const pesoBruto = cajas * pesoPorCaja;
