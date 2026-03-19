@@ -451,19 +451,10 @@ let taraPalet = 0;
 
 const envase = (parsed.envase || '').toLowerCase();
 
-if (envase.includes('palet')) {
-  taraPalet = 20;
-}
-const pesoBruto = cajas * pesoPorCaja;
-const tara = cajas * taraPorCaja + taraPalet;
-const pesoNeto = pesoBruto - tara;
-
-parsed.peso_estimado_kg = pesoBruto;
-parsed.tara_kg = tara;
-parsed.peso_neto_kg = pesoNeto;
-
+// Número de palets
 parsed.numero_palets = envase.includes('palet') ? 1 : 0;
 
+// MEDIDAS CAJA
 if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
   if (envase.includes('palet') || envase.includes('caja')) {
     parsed.medidas_caja = '60x40 cm aprox';
@@ -472,6 +463,7 @@ if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
   }
 }
 
+// MEDIDAS PALET
 if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
   if (envase.includes('palet')) {
     parsed.medidas_palet = '120x80 cm aprox';
