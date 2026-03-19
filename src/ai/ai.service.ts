@@ -462,19 +462,23 @@ parsed.peso_estimado_kg = pesoBruto;
 parsed.tara_kg = tara;
 parsed.peso_neto_kg = pesoNeto;
 
-parsed.numero_palets =
-  parsed.envase === 'palet con cajas' ? 1 : 0;
+parsed.numero_palets = envase.includes('palet') ? 1 : 0;
 
 if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
-  parsed.medidas_caja = '60x40 cm aprox';
+  if (envase.includes('palet') || envase.includes('caja')) {
+    parsed.medidas_caja = '60x40 cm aprox';
+  } else {
+    parsed.medidas_caja = 'por confirmar';
+  }
 }
 
-if (parsed.envase === 'palet con cajas') {
-  parsed.medidas_palet = '120x80 cm aprox';
-} else if (!parsed.medidas_palet) {
-  parsed.medidas_palet = 'por confirmar';
+if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
+  if (envase.includes('palet')) {
+    parsed.medidas_palet = '120x80 cm aprox';
+  } else {
+    parsed.medidas_palet = 'no aplica';
+  }
 }
-
 return parsed;		
   } catch (error: any) {
     console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
