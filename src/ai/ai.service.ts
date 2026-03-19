@@ -428,14 +428,6 @@ return parsed;
       parsed.cajas_aprox ??
       0;
 
-    if (parsed.envase === 'palet con cajas' && cajas < 50) {
-      cajas = cajas * 4;
-    }
-
-    if (parsed.envase === 'palet con cajas' && cajas < 50) {
-      cajas = 80;
-    }
-
     parsed.cajas_estimadas = cajas;
     parsed.cajas_aprox = cajas;
 
