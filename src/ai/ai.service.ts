@@ -463,11 +463,16 @@ if (envase.includes('caja')) {
 
 // MEDIDAS PALET
 if (envase.includes('palet')) {
-  parsed.medidas_palet = 'Europalet (120x80 cm aprox)';
+
+  if (envase.includes('industrial') || cajas >= 80) {
+    parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+  } else {
+    parsed.medidas_palet = 'Europalet (120x80 cm aprox)';
+  }
+
 } else {
   parsed.medidas_palet = 'no aplica';
 }
-
 const pesoBruto = cajas * pesoPorCaja;
 const tara = cajas * taraPorCaja + taraPalet;
 const pesoNeto = pesoBruto - tara;
