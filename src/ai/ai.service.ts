@@ -396,35 +396,6 @@ parsed.peso_neto_kg = pesoNeto;
 parsed.numero_palets =
   parsed.envase === 'palet con cajas' ? 1 : 0;
 
-const pesoPorCaja = 5;
-const taraPorCaja = 0.5;
-
-let taraPalet = 0;
-if (parsed.envase === 'palet con cajas') {
-  taraPalet = 20;
-}
-
-const pesoBruto = cajas * pesoPorCaja;
-const tara = cajas * taraPorCaja + taraPalet;
-const pesoNeto = pesoBruto - tara;
-
-parsed.peso_estimado_kg = pesoBruto;
-parsed.tara_kg = tara;
-parsed.peso_neto_kg = pesoNeto;
-
-parsed.numero_palets =
-  parsed.envase === 'palet con cajas' ? 1 : 0;
-
-if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
-  parsed.medidas_caja = '60x40 cm aprox';
-}
-
-if (parsed.envase === 'palet con cajas') {
-  parsed.medidas_palet = '120x80 cm aprox';
-} else if (!parsed.medidas_palet) {
-  parsed.medidas_palet = 'por confirmar';
-}
-
 return parsed;
   } catch (error: any) {
     console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
