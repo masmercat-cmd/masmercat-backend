@@ -459,7 +459,7 @@ if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
   }
 }
 
-/ ===== MEDIDAS PALET =====
+// ===== MEDIDAS PALET =====
 if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
   if (envase.includes('palet')) {
     parsed.medidas_palet = cajas >= 140
