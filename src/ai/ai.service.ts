@@ -418,6 +418,8 @@ if (envase.includes('palet')) {
 // ===== NORMALIZACIÓN PALOTS =====
 
 if (envase.includes('palot')) {
+  parsed.numero_palets = 1;
+
   cajas = 0;
   parsed.cajas_estimadas = 0;
   parsed.cajas_aprox = 0;
