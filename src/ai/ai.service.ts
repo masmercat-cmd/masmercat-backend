@@ -516,7 +516,7 @@ return parsed;
 
   // Intento B: base64 “puro” (por si el data URL falla en tu entorno)
   try {
-   const response = completion.choices[0]?.message?.content || '{}';
+   const response = completionResponse.choices[0]?.message?.content || '{}';
     console.log('📨 OpenAI content (attempt A):', response);
     console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
     
