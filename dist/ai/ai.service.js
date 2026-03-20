@@ -124,7 +124,7 @@ Responda de maneira amigável, concisa e profissional em português.`,
                 temperature: 0.7,
                 max_tokens: 500,
             });
-            return completion.choices[0]?.message?.content || '';
+            completion.choices[0]?.message?.content || '';
         }
         catch (error) {
             console.error('❌ OpenAI chat error:', error?.message || error);
@@ -190,23 +190,33 @@ Identifica:
    - desconocido4
 
 5. Si el envase es "palet con cajas", analiza así:
-   - cuenta columnas visibles en la cara frontal
-   - cuenta filas o niveles visibles en altura
-   - cuenta columnas o filas visibles en la cara lateral si se aprecia
-   - estima la profundidad real del palet usando la cara lateral y/o la parte superior visible
-   - detecta si hay cajas adicionales colocadas arriba
-   - calcula una estimación total realista del palet completo, no solo de la cara frontal
+- SIEMPRE estima el total del palet completo, no solo lo visible de frente
+- Si hay varias capas en profundidad, multiplícalas
+- Si hay cajas encima, súmalas aparte
+- Si dudas entre varios valores, elige el MAYOR coherente
+- NUNCA devuelvas solo la cara frontal
 
-Reglas para palet con cajas:
-- NO devuelvas solo las cajas visibles de frente si se aprecia claramente profundidad o lateral.
-- Si se ven dos caras del palet, usa ambas para estimar el volumen real.
-- Prioriza frente × profundidad × altura cuando sea visualmente coherente.
-- Si la parte superior ayuda a ver la profundidad, úsala como apoyo, pero no como única referencia.
-- Si hay cajas sueltas arriba, súmalas por separado en cajas_superiores.
-- cajas_estimadas debe ser el total estimado completo del palet.
-- Evita subestimar palets altos o con doble cara visible.
-- Si no puedes medir con precisión, estima de forma conservadora pero coherente.
-- Si hay duda, usa confianza "media" o "baja".
+El valor de "cajas_estimadas" debe representar el TOTAL REAL del palet completo.
+Ejemplo: si ves 6x4 cajas delante y estimas 3 capas → devuelve ~72, no 24.
+
+- cuenta columnas visibles en la cara frontal
+- cuenta filas visibles en altura (niveles)
+- identifica si hay profundidad (segunda fila o cara lateral visible)
+- asume profundidad mínima de 1, pero aumenta si se ve lateral o volumen
+
+Debes calcular SIEMPRE con fórmula:
+
+- cajas_frente = columnas × filas
+- profundidad = número de filas hacia atrás (mínimo 1)
+- cajas_totales = cajas_frente × profundidad
+
+IMPORTANTE:
+- NO devuelvas solo las cajas visibles de frente
+- SIEMPRE estima volumen completo del palet
+- Si se ve lateral o parte superior, aumenta profundidad
+- Si el palet es alto, aumenta filas
+- Si parece lleno, evita números bajos
+- Es mejor aproximar alto que quedarse corto
 
 6. Si es palot:
    - estima el peso aproximado del palot lleno
@@ -257,33 +267,70 @@ Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
   "filas_visibles": 0,
   "cajas_por_capa": 0,
   "capas_estimadas": 0,
+  "cajas_aprox": 0,
   "cajas_superiores": 0,
   "cajas_estimadas": 0,
   "piezas_por_caja": 0,
   "cantidad_total_piezas": 0,
+  "cantidad_aprox": 0,
   "calibre": "1/2/3/4/5/6/A/B",
   "peso_estimado_kg": 0,
+  "tara_kg": 0,
+  "peso_neto_kg": 0,
+  "numero_palets": 0,
   "calidad": "extra/primera/segunda",
   "medidas_caja": "por confirmar",
+  "medidas_palet": "por confirmar",
   "confianza_estimacion": "alta/media/baja"
 }`,
             en: `Analyze this fruit or vegetable image.
 
 Identify:
 1. Fruit type
-2. Approximate size (1, 2, 3, A, B)
-3. Approximate quantity
-4. Estimated total weight in kg
-5. Quality (extra, first, second)
+2. Approximate size (caliber)
+3. Estimate the total number of boxes on the whole pallet using structural counting:
+ - count visible boxes on the front face
+ - count visible boxes on the side face
+ - estimate boxes per layer
+ - estimate number of layers in height
+ - infer hidden boxes from pallet depth and width
+ - determine whether it is half pallet, europallet (120x80), or industrial pallet (120x100)
+ - if the pallet is full and densely stacked, prefer a realistic commercial total instead of a low visual-only count
+4. Estimate pieces per box
+5. Estimated total weight in kg
+6. Quality (extra, first, second)
+7. Packaging type (box, pallet with boxes, loose)
+8. Box dimensions (e.g. "60x40 cm approx")
+9. Pallet dimensions if present (e.g. "120x100 cm approx")
 
 Respond ONLY in JSON with these keys:
 {
-  "fruta": "orange/lemon/etc",
+   "fruta": "orange/lemon/etc",
   "calibre": "1/2/3/A/B",
-  "cantidad_total_piezas": 80,
-  "peso_estimado_kg": 18,
-  "calidad": "extra/first/second"
-}`
+  "cajas_estimadas": 184,
+  "piezas_por_caja": 20,
+  "cantidad_total_piezas": 3680,
+  "peso_estimado_kg": 920,
+  "calidad": "extra/first/second",
+  "envase": "box / pallet with boxes",
+  "medidas_caja": "60x40 cm approx",
+  "medidas_palet": "120x100 cm approx"
+}
+
+IMPORTANT:
+- If a pallet is visible, ALWAYS estimate pallet dimensions.
+- If boxes are visible, ALWAYS estimate box dimensions.
+- Never return "por confirmar".
+- Always give an approximate value even if uncertain.
+- Estimate box count structurally, not loosely.
+- Use visible rows and columns on the front and side faces to infer total boxes.
+- Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
+- If the pallet is full height and densely stacked, avoid low counts.
+- Prefer realistic commercial pallet counts for fruit boxes.
+- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
+- Do not count only the front-visible boxes.
+- For full pallets, prioritize total pallet structure over partial face visibility.
+`,
         };
         const lang = (language || 'es').substring(0, 2);
         const prompt = prompts[lang] || prompts.es;
@@ -318,7 +365,52 @@ Respond ONLY in JSON with these keys:
             const response = completion.choices[0]?.message?.content || '{}';
             console.log('📨 OpenAI content (attempt A):', response);
             console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
-            return JSON.parse(response);
+            const parsed = JSON.parse(response);
+            let cajas = parsed.cajas_estimadas ??
+                parsed.cajas_aprox ??
+                0;
+            const envase = (parsed.envase || '').toLowerCase();
+            if (envase.includes('palet')) {
+                if (cajas > 0 && cajas < 60) {
+                    cajas = Math.round(cajas * 2.5);
+                }
+                if (cajas < 80) {
+                    cajas = Math.max(cajas, 100);
+                }
+                if (cajas >= 100 && cajas < 140) {
+                    cajas = Math.round(cajas * 1.3);
+                }
+            }
+            if (envase.includes('palot')) {
+                cajas = 0;
+                if (!parsed.peso_estimado_kg || parsed.peso_estimado_kg < 100) {
+                    parsed.peso_estimado_kg = 300;
+                }
+            }
+            if (cajas > 400) {
+                cajas = 400;
+            }
+            parsed.cajas_estimadas = cajas;
+            parsed.cajas_aprox = cajas;
+            if (parsed.piezas_por_caja) {
+                parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
+                parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
+            }
+            const pesoPorCaja = 5;
+            const taraPorCaja = 0.5;
+            let taraPalet = 0;
+            if (parsed.envase === 'palet con cajas') {
+                taraPalet = 20;
+            }
+            const pesoBruto = cajas * pesoPorCaja;
+            const tara = cajas * taraPorCaja + taraPalet;
+            const pesoNeto = pesoBruto - tara;
+            parsed.peso_estimado_kg = pesoBruto;
+            parsed.tara_kg = tara;
+            parsed.peso_neto_kg = pesoNeto;
+            parsed.numero_palets =
+                parsed.envase === 'palet con cajas' ? 1 : 0;
+            return parsed;
         }
         catch (error) {
             console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
@@ -341,7 +433,45 @@ Respond ONLY in JSON with these keys:
                 temperature: 0,
             });
             const response = completion.choices[0]?.message?.content || '{}';
-            return JSON.parse(response);
+            const parsed = JSON.parse(response);
+            let cajas = parsed.cajas_estimadas ??
+                parsed.cajas_aprox ??
+                0;
+            parsed.cajas_estimadas = cajas;
+            parsed.cajas_aprox = cajas;
+            if (parsed.piezas_por_caja) {
+                parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
+                parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
+            }
+            const pesoPorCaja = 5;
+            const taraPorCaja = 0.5;
+            let taraPalet = 0;
+            const envase = (parsed.envase || '').toLowerCase();
+            parsed.numero_palets = envase.includes('palet') ? 1 : 0;
+            if (envase.includes('caja')) {
+                parsed.medidas_caja = '60x40 cm aprox';
+            }
+            else {
+                parsed.medidas_caja = 'por confirmar';
+            }
+            if (envase.includes('palet')) {
+                if (envase.includes('industrial') || cajas >= 80) {
+                    parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+                }
+                else {
+                    parsed.medidas_palet = 'Europalet (120x80 cm aprox)';
+                }
+            }
+            else {
+                parsed.medidas_palet = 'no aplica';
+            }
+            const pesoBruto = cajas * pesoPorCaja;
+            const tara = cajas * taraPorCaja + taraPalet;
+            const pesoNeto = pesoBruto - tara;
+            parsed.peso_estimado_kg = pesoBruto;
+            parsed.tara_kg = tara;
+            parsed.peso_neto_kg = pesoNeto;
+            return parsed;
         }
         catch (error) {
             console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
