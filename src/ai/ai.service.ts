@@ -436,7 +436,7 @@ if (parsed.piezas_por_caja) {
   parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
 }
 
-const pesoPorCaja = 5;
+const pesoPorCaja = 5.5;
 const taraPorCaja = 0.5;
 
 let taraPalet = 0;
@@ -451,6 +451,26 @@ const pesoNeto = pesoBruto - tara;
 parsed.peso_estimado_kg = pesoBruto;
 parsed.tara_kg = tara;
 parsed.peso_neto_kg = pesoNeto;
+
+// ===== MEDIDAS POR DEFECTO =====
+if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
+  if (envase.includes('caja') || envase.includes('palet')) {
+    parsed.medidas_caja = '60x40 cm aprox';
+  }
+}
+
+/ ===== MEDIDAS PALET =====
+if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
+  if (envase.includes('palet')) {
+    parsed.medidas_palet = cajas >= 140
+      ? 'Palet industrial (120x100 cm aprox)'
+      : 'Europalet (120x80 cm aprox)';
+  }
+
+  if (envase.includes('palot')) {
+    parsed.medidas_palet = 'Palot (aprox)';
+  }
+}
 
 parsed.numero_palets =
   parsed.envase === 'palet con cajas' ? 1 : 0;
