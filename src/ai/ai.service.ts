@@ -300,19 +300,50 @@ en: `Analyze this fruit or vegetable image.
 
 Identify:
 1. Fruit type
-2. Approximate size (1, 2, 3, A, B)
-3. Approximate quantity
-4. Estimated total weight in kg
-5. Quality (extra, first, second)
+2. Approximate size (caliber)
+3. Estimate the total number of boxes on the whole pallet using structural counting:
+ - count visible boxes on the front face
+ - count visible boxes on the side face
+ - estimate boxes per layer
+ - estimate number of layers in height
+ - infer hidden boxes from pallet depth and width
+ - determine whether it is half pallet, europallet (120x80), or industrial pallet (120x100)
+ - if the pallet is full and densely stacked, prefer a realistic commercial total instead of a low visual-only count
+4. Estimate pieces per box
+5. Estimated total weight in kg
+6. Quality (extra, first, second)
+7. Packaging type (box, pallet with boxes, loose)
+8. Box dimensions (e.g. "60x40 cm approx")
+9. Pallet dimensions if present (e.g. "120x100 cm approx")
 
 Respond ONLY in JSON with these keys:
 {
-  "fruta": "orange/lemon/etc",
+   "fruta": "orange/lemon/etc",
   "calibre": "1/2/3/A/B",
-  "cantidad_total_piezas": 80,
-  "peso_estimado_kg": 18,
-  "calidad": "extra/first/second"
-}`
+  "cajas_estimadas": 184,
+  "piezas_por_caja": 20,
+  "cantidad_total_piezas": 3680,
+  "peso_estimado_kg": 920,
+  "calidad": "extra/first/second",
+  "envase": "box / pallet with boxes",
+  "medidas_caja": "60x40 cm approx",
+  "medidas_palet": "120x100 cm approx"
+}
+
+IMPORTANT:
+- If a pallet is visible, ALWAYS estimate pallet dimensions.
+- If boxes are visible, ALWAYS estimate box dimensions.
+- Never return "por confirmar".
+- Always give an approximate value even if uncertain.
+- Estimate box count structurally, not loosely.
+- Use visible rows and columns on the front and side faces to infer total boxes.
+- Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
+- If the pallet is full height and densely stacked, avoid low counts.
+- Prefer realistic commercial pallet counts for fruit boxes.
+- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
+- Do not count only the front-visible boxes.
+- For full pallets, prioritize total pallet structure over partial face visibility.
+`,
 };
 
   const lang = (language || 'es').substring(0, 2);
@@ -361,12 +392,37 @@ let cajas =
   parsed.cajas_aprox ??
   0;
 
-if (parsed.envase === 'palet con cajas' && cajas < 50) {
-  cajas = cajas * 4;
+const envase = (parsed.envase || '').toLowerCase();
+
+// ===== NORMALIZACIÓN PALETS =====
+if (envase.includes('palet')) {
+
+  if (cajas > 0 && cajas < 60) {
+    cajas = Math.round(cajas * 2.5);
+  }
+
+  if (cajas < 80) {
+    cajas = Math.max(cajas, 100);
+  }
+
+  if (cajas >= 100 && cajas < 140) {
+    cajas = Math.round(cajas * 1.3);
+  }
 }
 
-if (parsed.envase === 'palet con cajas' && cajas < 50) {
-  cajas = 80;
+// ===== NORMALIZACIÓN PALOTS =====
+if (envase.includes('palot')) {
+
+  cajas = 0;
+
+  if (!parsed.peso_estimado_kg || parsed.peso_estimado_kg < 100) {
+    parsed.peso_estimado_kg = 300;
+  }
+}
+
+// ===== LÍMITE SUPERIOR =====
+if (cajas > 400) {
+  cajas = 400;
 }
 
 parsed.cajas_estimadas = cajas;
