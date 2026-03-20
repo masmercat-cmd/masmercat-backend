@@ -406,7 +406,10 @@ if (envase.includes('palet')) {
   }
 
   if (cajas >= 100 && cajas < 140) {
-    cajas = Math.round(cajas * 1.3);
+    cajas = Math.round(cajas * 1.45);
+  }
+  if (envase.includes('palet') && cajas >= 140 && cajas < 170) {
+  cajas = Math.round(cajas * 1.15);
   }
 }
 
