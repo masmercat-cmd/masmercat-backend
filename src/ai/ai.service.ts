@@ -515,17 +515,34 @@ return parsed;
   }
 
   // Intento B: base64 “puro” (por si el data URL falla en tu entorno)
-  try {
-   const response = completionResponse.choices[0]?.message?.content || '{}';
-    console.log('📨 OpenAI content (attempt A):', response);
-    console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
-    
-    const parsed = JSON.parse(response);
+  
+try {
+  const completionResponse = await this.openai.chat.completions.create({
+    model: 'gpt-4o',
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: img } },
+        ],
+      },
+    ],
+    max_tokens: 500,
+    temperature: 0,
+  });
 
-let cajas =
-  parsed.cajas_estimadas ??
-  parsed.cajas_aprox ??
-  0;
+  const response = completionResponse.choices[0]?.message?.content || '{}';
+  console.log('📄 OpenAI content (attempt B):', response);
+  console.log('📄 OpenAI parsed JSON:', JSON.parse(response));
+
+  const parsed = JSON.parse(response);
+
+  let cajas =
+    parsed.cajas_estimadas ??
+    parsed.cajas_aprox ??
+    0;
 
 const envase = (parsed.envase || '').toLowerCase();
 
