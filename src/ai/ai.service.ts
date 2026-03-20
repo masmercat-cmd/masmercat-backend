@@ -396,21 +396,22 @@ let cajas =
 const envase = (parsed.envase || '').toLowerCase();
 
 // ===== NORMALIZACIÓN PALETS =====
-if (envase.includes('palet')) {
 
+if (envase.includes('palet')) {
   if (cajas > 0 && cajas < 60) {
     cajas = Math.round(cajas * 2.5);
   }
 
   if (cajas < 80) {
-    cajas = Math.max(cajas, 100);
+    cajas = Math.max(cajas, 120);
   }
 
-  if (cajas >= 100 && cajas < 140) {
+  if (cajas >= 80 && cajas < 140) {
     cajas = Math.round(cajas * 1.45);
   }
-  if (envase.includes('palet') && cajas >= 140 && cajas < 170) {
-  cajas = Math.round(cajas * 1.15);
+
+  if (cajas >= 140 && cajas < 170) {
+    cajas = Math.round(cajas * 1.15);
   }
 }
 
@@ -495,10 +496,9 @@ if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
 // ===== MEDIDAS PALET =====
 if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
   if (envase.includes('palet')) {
-    parsed.medidas_palet = cajas >= 140
-      ? 'Palet industrial (120x100 cm aprox)'
-      : 'Europalet (120x80 cm aprox)';
-  }
+    parsed.medidas_palet = cajas >= 80
+  ? 'Palet industrial (120x100 cm aprox)'
+  : 'Europalet (120x80 cm aprox)';  }
 
   if (envase.includes('palot')) {
     parsed.medidas_palet = 'Palot estándar (120x100x75 cm aprox)';
