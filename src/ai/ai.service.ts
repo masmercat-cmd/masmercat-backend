@@ -71,6 +71,34 @@ export class AiService {
       estimated = frontVisible;
     }
 
+    if (envase.includes('palet')) {
+      const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+      const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+      const likelyIndustrial =
+        palletMeasures.includes('120x100') ||
+        boxMeasures.includes('60x40') ||
+        normalizedBoxesPerLayer >= 28;
+
+      const looksLikeFullFrontFaceOnly =
+        frontVisible >= 56 &&
+        frontVisible <= 72 &&
+        estimated <= frontVisible + 8;
+
+      const looksLikeUnderCountedIndustrialPallet =
+        boxMeasures.includes('60x40') &&
+        estimated >= 72 &&
+        estimated <= 110;
+
+      // Full-height industrial pallets with 60x40 fruit boxes often land
+      // around 184 total boxes; this prevents returning only the visible face.
+      if (
+        (likelyIndustrial && looksLikeFullFrontFaceOnly) ||
+        looksLikeUnderCountedIndustrialPallet
+      ) {
+        estimated = Math.max(estimated, 184);
+      }
+    }
+
     return Math.round(this.clamp(estimated, 0, 400));
   }
 
@@ -222,6 +250,10 @@ export class AiService {
 
     parsed.numero_palets =
       envase.includes('palet') || envase.includes('palot') ? 1 : 0;
+
+    if (envase.includes('palet') && boxes >= 184) {
+      parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+    }
 
     return parsed;
   }
