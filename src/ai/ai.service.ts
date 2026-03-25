@@ -15,6 +15,14 @@ export class ChatMessageDto {
 export class AiService {
   private openai: OpenAI;
 
+  private logVisionSnapshot(label: string, payload: any): void {
+    try {
+      console.log(`📦 ${label}:`, JSON.stringify(payload, null, 2));
+    } catch {
+      console.log(`📦 ${label}:`, payload);
+    }
+  }
+
   private toNumber(value: any): number {
     if (typeof value === 'number') {
       return Number.isFinite(value) ? value : 0;
@@ -270,6 +278,102 @@ export class AiService {
     }
 
     return parsed;
+  }
+
+  private async refinePalletEstimate(
+    img: string,
+    parsed: any,
+    language: string,
+  ): Promise<any> {
+    const lang = (language || 'es').substring(0, 2);
+    const prompt =
+      lang === 'en'
+        ? `You are reviewing a fruit pallet image because the first estimate may be undercounting boxes.
+
+Return ONLY valid JSON with:
+{
+  "columnas_visibles": 0,
+  "filas_visibles": 0,
+  "cajas_por_capa": 0,
+  "capas_estimadas": 0,
+  "cajas_superiores": 0,
+  "cajas_estimadas": 0,
+  "medidas_caja": "60x40 cm approx",
+  "medidas_palet": "Industrial pallet (120x100 cm approx) / Europallet (120x80 cm approx)",
+  "confianza_estimacion": "alta/media/baja"
+}
+
+Rules:
+- Count the visible front face first.
+- Infer the full pallet depth and total layers.
+- Do NOT return only the visible front boxes.
+- If the pallet is tall and densely packed, prefer the full commercial pallet total.
+- Distinguish europallet vs industrial pallet from footprint and number of boxes per layer.`
+        : `Estás revisando una imagen de palet de fruta porque la primera estimación puede estar contando pocas cajas.
+
+Devuelve SOLO JSON válido con:
+{
+  "columnas_visibles": 0,
+  "filas_visibles": 0,
+  "cajas_por_capa": 0,
+  "capas_estimadas": 0,
+  "cajas_superiores": 0,
+  "cajas_estimadas": 0,
+  "medidas_caja": "60x40 cm aprox",
+  "medidas_palet": "Palet industrial (120x100 cm aprox) / Europalet (120x80 cm aprox)",
+  "confianza_estimacion": "alta/media/baja"
+}
+
+Reglas:
+- Cuenta primero la cara frontal visible.
+- Infiere la profundidad total del palet y las capas completas.
+- NO devuelvas solo las cajas visibles de frente.
+- Si el palet es alto y está muy lleno, prioriza el total comercial completo.
+- Distingue europalet y palet industrial por huella y cajas por capa.
+- Si ves un palet alto de caja 60x40 con frontal grande, evita respuestas como 64 si el total del volumen es mayor.`;
+
+    const completion = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `${prompt}\n\nPrimera lectura previa:\n${JSON.stringify(parsed)}`,
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${img}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 250,
+      temperature: 0,
+    });
+
+    const response = completion.choices[0]?.message?.content || '{}';
+    const refined = JSON.parse(response);
+    this.logVisionSnapshot('OpenAI refine pallet raw JSON', refined);
+
+    return {
+      ...parsed,
+      ...refined,
+      columnas_visibles:
+        refined.columnas_visibles ?? parsed.columnas_visibles,
+      filas_visibles: refined.filas_visibles ?? parsed.filas_visibles,
+      cajas_por_capa: refined.cajas_por_capa ?? parsed.cajas_por_capa,
+      capas_estimadas: refined.capas_estimadas ?? parsed.capas_estimadas,
+      cajas_superiores: refined.cajas_superiores ?? parsed.cajas_superiores,
+      cajas_estimadas: Math.max(
+        this.toNumber(parsed.cajas_estimadas ?? parsed.cajas_aprox),
+        this.toNumber(refined.cajas_estimadas),
+      ),
+    };
   }
 
   async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
@@ -709,8 +813,20 @@ IMPORTANT:
     console.log('📨 OpenAI content (attempt A):', response);
     console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
     
-    const parsed = JSON.parse(response);
-    return this.finalizeVisionResult(parsed);
+    let parsed = JSON.parse(response);
+    this.logVisionSnapshot('OpenAI attempt A raw JSON', parsed);
+    const envaseInicial = this.normalizeEnvase(parsed.envase);
+    const cajasIniciales = this.toNumber(
+      parsed.cajas_estimadas ?? parsed.cajas_aprox,
+    );
+
+    if (envaseInicial.includes('palet') && cajasIniciales <= 120) {
+      parsed = await this.refinePalletEstimate(img, parsed, lang);
+    }
+
+    const finalized = this.finalizeVisionResult(parsed);
+    this.logVisionSnapshot('Final pallet result attempt A', finalized);
+    return finalized;
   } catch (error: any) {
     console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
     console.error('❌ details:', error?.response?.data || error?.response || error);
@@ -739,8 +855,20 @@ try {
   console.log('📄 OpenAI content (attempt B):', response);
   console.log('📄 OpenAI parsed JSON:', JSON.parse(response));
 
-  const parsed = JSON.parse(response);
-  return this.finalizeVisionResult(parsed);
+  let parsed = JSON.parse(response);
+  this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
+  const envaseInicial = this.normalizeEnvase(parsed.envase);
+  const cajasIniciales = this.toNumber(
+    parsed.cajas_estimadas ?? parsed.cajas_aprox,
+  );
+
+  if (envaseInicial.includes('palet') && cajasIniciales <= 120) {
+    parsed = await this.refinePalletEstimate(img, parsed, lang);
+  }
+
+  const finalized = this.finalizeVisionResult(parsed);
+  this.logVisionSnapshot('Final pallet result attempt B', finalized);
+  return finalized;
 
   } catch (error: any) {
     console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
