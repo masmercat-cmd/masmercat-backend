@@ -12,6 +12,220 @@ export class ChatMessageDto {
 export class AiService {
   private openai: OpenAI;
 
+  private toNumber(value: any): number {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value.replace(',', '.').trim();
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    return 0;
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  private normalizeEnvase(value: any): string {
+    return `${value ?? ''}`.trim().toLowerCase();
+  }
+
+  private normalizeProducto(value: any): string {
+    return `${value ?? ''}`.trim().toLowerCase();
+  }
+
+  private estimateBoxes(parsed: any, envase: string): number {
+    if (envase.includes('palot')) {
+      return 0;
+    }
+
+    const existingBoxes = this.toNumber(
+      parsed.cajas_estimadas ?? parsed.cajas_aprox,
+    );
+    const visibleColumns = this.toNumber(parsed.columnas_visibles);
+    const visibleRows = this.toNumber(parsed.filas_visibles);
+    const boxesPerLayer = this.toNumber(parsed.cajas_por_capa);
+    const estimatedLayers = this.toNumber(parsed.capas_estimadas);
+    const topBoxes = this.toNumber(parsed.cajas_superiores);
+
+    const frontVisible =
+      visibleColumns > 0 && visibleRows > 0 ? visibleColumns * visibleRows : 0;
+    const normalizedBoxesPerLayer = Math.max(boxesPerLayer, frontVisible);
+    const normalizedLayers = Math.max(
+      estimatedLayers,
+      envase.includes('palet') ? 1 : 0,
+    );
+
+    const structuralTotal =
+      normalizedBoxesPerLayer > 0
+        ? normalizedBoxesPerLayer * Math.max(normalizedLayers, 1) + topBoxes
+        : 0;
+
+    let estimated = Math.max(existingBoxes, structuralTotal);
+
+    if (envase.includes('palet') && estimated === 0 && frontVisible > 0) {
+      estimated = frontVisible;
+    }
+
+    return Math.round(this.clamp(estimated, 0, 400));
+  }
+
+  private inferBoxWeightKg(parsed: any, producto: string): number {
+    const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
+
+    const avgPieceWeights: Record<string, number> = {
+      aguacate: 0.22,
+      albaricoque: 0.06,
+      berenjena: 0.3,
+      cereza: 0.012,
+      ciruela: 0.055,
+      fresa: 0.025,
+      frambuesa: 0.005,
+      granada: 0.35,
+      kiwi: 0.09,
+      limon: 0.12,
+      mandarina: 0.1,
+      manzana: 0.18,
+      melocoton: 0.17,
+      melon: 1.4,
+      naranja: 0.2,
+      nectarina: 0.16,
+      paraguayo: 0.14,
+      pera: 0.19,
+      pimiento: 0.18,
+      platano: 0.18,
+      sandia: 6.5,
+      tomate: 0.12,
+      uva: 0.007,
+    };
+
+    if (piecesPerBox > 0 && avgPieceWeights[producto]) {
+      return this.clamp(piecesPerBox * avgPieceWeights[producto], 2.5, 22);
+    }
+
+    const defaultWeights: Record<string, number> = {
+      aguacate: 4,
+      berenjena: 5,
+      cereza: 2.5,
+      fresa: 2,
+      kiwi: 3.2,
+      limon: 6,
+      mandarina: 7,
+      manzana: 8,
+      melocoton: 7,
+      melon: 10,
+      naranja: 8,
+      nectarina: 7,
+      paraguayo: 6,
+      pera: 8,
+      pimiento: 5,
+      platano: 18,
+      sandia: 18,
+      tomate: 6,
+      uva: 4.5,
+    };
+
+    return defaultWeights[producto] ?? 6.5;
+  }
+
+  private inferTarePerBoxKg(parsed: any): number {
+    const material = `${parsed.material_caja ?? ''}`.toLowerCase();
+
+    if (material.includes('madera')) return 1.2;
+    if (material.includes('plast')) return 0.8;
+    if (material.includes('cart')) return 0.45;
+
+    return 0.6;
+  }
+
+  private inferPalletTareKg(parsed: any, envase: string, boxes: number): number {
+    if (envase.includes('palot')) {
+      return Math.max(this.toNumber(parsed.tara_kg), 35);
+    }
+
+    if (!envase.includes('palet')) {
+      return 0;
+    }
+
+    const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+    if (palletMeasures.includes('120x100') || boxes >= 140) {
+      return 22;
+    }
+
+    return 18;
+  }
+
+  private finalizeVisionResult(parsed: any): any {
+    const envase = this.normalizeEnvase(parsed.envase);
+    const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
+    const boxes = this.estimateBoxes(parsed, envase);
+    const isPalot = envase.includes('palot');
+    const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
+    const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
+    const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
+    const aiGrossWeight = this.toNumber(
+      parsed.peso_bruto_kg ?? parsed.peso_estimado_kg,
+    );
+
+    parsed.cajas_estimadas = boxes;
+    parsed.cajas_aprox = boxes;
+
+    const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
+    if (boxes > 0 && piecesPerBox > 0) {
+      const totalPieces = Math.round(boxes * piecesPerBox);
+      parsed.cantidad_total_piezas = totalPieces;
+      parsed.cantidad_aprox = totalPieces;
+    }
+
+    let grossWeight = aiGrossWeight;
+    if (isPalot) {
+      grossWeight = Math.max(aiGrossWeight, 280);
+    } else if (boxes > 0) {
+      const estimatedGross = boxes * boxWeightKg;
+      grossWeight =
+        aiGrossWeight > 0
+          ? Number(((aiGrossWeight + estimatedGross) / 2).toFixed(2))
+          : Number(estimatedGross.toFixed(2));
+    }
+
+    const tareWeight = isPalot
+      ? palletTareKg
+      : Number((boxes * tarePerBoxKg + palletTareKg).toFixed(2));
+
+    parsed.peso_bruto_kg = Number(grossWeight.toFixed(2));
+    parsed.peso_estimado_kg = Number(grossWeight.toFixed(2));
+    parsed.tara_kg = Number(tareWeight.toFixed(2));
+    parsed.peso_neto_kg = Number(Math.max(0, grossWeight - tareWeight).toFixed(2));
+
+    if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
+      if (envase.includes('caja') || envase.includes('palet')) {
+        parsed.medidas_caja = '60x40 cm aprox';
+      }
+    }
+
+    if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
+      if (envase.includes('palet')) {
+        parsed.medidas_palet =
+          palletTareKg >= 22
+            ? 'Palet industrial (120x100 cm aprox)'
+            : 'Europalet (120x80 cm aprox)';
+      }
+
+      if (envase.includes('palot')) {
+        parsed.medidas_palet = 'Palot estandar (120x100x75 cm aprox)';
+      }
+    }
+
+    parsed.numero_palets =
+      envase.includes('palet') || envase.includes('palot') ? 1 : 0;
+
+    return parsed;
+  }
+
   private systemPrompts: Record<string, string> = {
     es: `Eres Nara, el asistente virtual de MasMercat, una plataforma mayorista de comercio de frutas. 
 Tu objetivo es ayudar a usuarios (compradores y vendedores) a usar la aplicación y responder preguntas sobre frutas, mercados y temporadas.
@@ -387,130 +601,7 @@ IMPORTANT:
     console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
     
     const parsed = JSON.parse(response);
-
-let cajas =
-  parsed.cajas_estimadas ??
-  parsed.cajas_aprox ??
-  0;
-
-const envase = (parsed.envase || '').toLowerCase();
-
-// ===== NORMALIZACIÓN PALETS =====
-
-if (envase.includes('palet')) {
-  if (cajas > 0 && cajas < 60) {
-    cajas = Math.round(cajas * 2.5);
-  }
-
-  if (cajas < 80) {
-    cajas = Math.max(cajas, 120);
-  }
-
-  if (cajas >= 80 && cajas < 140) {
-    cajas = Math.round(cajas * 1.45);
-  }
-
-  if (cajas >= 140 && cajas < 170) {
-    cajas = Math.round(cajas * 1.15);
-  }
-}
-
-// ===== NORMALIZACIÓN PALOTS =====
-
-if (envase.includes('palot')) {
-  parsed.numero_palets = 1;
-
-  cajas = 0;
-  parsed.cajas_estimadas = 0;
-  parsed.cajas_aprox = 0;
-  parsed.piezas_por_caja = 0;
-
-  if (!parsed.peso_estimado_kg || parsed.peso_estimado_kg < 150) {
-    parsed.peso_estimado_kg = 280;
-  }
-
-  if (!parsed.tara_kg || parsed.tara_kg < 20) {
-    parsed.tara_kg = 35;
-  }
-
-  parsed.peso_neto_kg = Math.max(
-    0,
-    (parsed.peso_estimado_kg || 0) - (parsed.tara_kg || 0),
-  );
-
-  if (!parsed.cantidad_total_piezas || parsed.cantidad_total_piezas < 50) {
-    parsed.cantidad_total_piezas = 300;
-  }
-
-  if (!parsed.cantidad_aprox || parsed.cantidad_aprox < 50) {
-    parsed.cantidad_aprox = parsed.cantidad_total_piezas;
-  }
-
-  if (!parsed.numero_palets || parsed.numero_palets < 1) {
-    parsed.numero_palets = 1;
-  }
-}
-
-// ===== LÍMITE SUPERIOR =====
-if (cajas > 400) {
-  cajas = 400;
-}
-
-parsed.cajas_estimadas = cajas;
-parsed.cajas_aprox = cajas;
-
-if (parsed.piezas_por_caja) {
-  parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
-  parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
-}
-
-const pesoPorCaja = 5.5;
-const taraPorCaja = 0.5;
-
-let taraPalet = 0;
-if (parsed.envase === 'palet con cajas') {
-  taraPalet = 20;
-}
-
-const esPalot = envase.includes('palot');
-
-const pesoBruto = esPalot
-  ? (parsed.peso_estimado_kg || 0)
-  : cajas * pesoPorCaja;
-
-const tara = esPalot
-  ? (parsed.tara_kg || 35)
-  : cajas * taraPorCaja + taraPalet;
-
-const pesoNeto = Math.max(0, pesoBruto - tara);
-
-parsed.peso_estimado_kg = pesoBruto;
-parsed.tara_kg = tara;
-parsed.peso_neto_kg = pesoNeto;
-
-// ===== MEDIDAS POR DEFECTO =====
-if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
-  if (envase.includes('caja') || envase.includes('palet')) {
-    parsed.medidas_caja = '60x40 cm aprox';
-  }
-}
-
-// ===== MEDIDAS PALET =====
-if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
-  if (envase.includes('palet')) {
-    parsed.medidas_palet = cajas >= 80
-  ? 'Palet industrial (120x100 cm aprox)'
-  : 'Europalet (120x80 cm aprox)';  }
-
-  if (envase.includes('palot')) {
-    parsed.medidas_palet = 'Palot estándar (120x100x75 cm aprox)';
-  }
-}
-
-parsed.numero_palets =
-  envase.includes('palet') || envase.includes('palot') ? 1 : 0;
-
-return parsed;
+    return this.finalizeVisionResult(parsed);
   } catch (error: any) {
     console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
     console.error('❌ details:', error?.response?.data || error?.response || error);
@@ -540,128 +631,7 @@ try {
   console.log('📄 OpenAI parsed JSON:', JSON.parse(response));
 
   const parsed = JSON.parse(response);
-
-  let cajas =
-    parsed.cajas_estimadas ??
-    parsed.cajas_aprox ??
-    0;
-
-const envase = (parsed.envase || '').toLowerCase();
-
-// ===== NORMALIZACIÓN PALETS =====
-if (envase.includes('palet')) {
-
-  if (cajas > 0 && cajas < 60) {
-    cajas = Math.round(cajas * 2.5);
-  }
-
-  if (cajas < 80) {
-    cajas = Math.max(cajas, 100);
-  }
-
-  if (cajas >= 100 && cajas < 140) {
-    cajas = Math.round(cajas * 1.45);
-  }
-  if (envase.includes('palet') && cajas >= 140 && cajas < 170) {
-  cajas = Math.round(cajas * 1.15);
-  }
-}
-
-// ===== NORMALIZACIÓN PALOTS =====
-
-if (envase.includes('palot')) {
-  cajas = 0;
-  parsed.cajas_estimadas = 0;
-  parsed.cajas_aprox = 0;
-  parsed.piezas_por_caja = 0;
-
-  if (!parsed.peso_estimado_kg || parsed.peso_estimado_kg < 150) {
-    parsed.peso_estimado_kg = 280;
-  }
-
-  if (!parsed.tara_kg || parsed.tara_kg < 20) {
-    parsed.tara_kg = 35;
-  }
-
-  parsed.peso_neto_kg = Math.max(
-    0,
-    (parsed.peso_estimado_kg || 0) - (parsed.tara_kg || 0),
-  );
-
-  if (!parsed.cantidad_total_piezas || parsed.cantidad_total_piezas < 50) {
-    parsed.cantidad_total_piezas = 300;
-  }
-
-  if (!parsed.cantidad_aprox || parsed.cantidad_aprox < 50) {
-    parsed.cantidad_aprox = parsed.cantidad_total_piezas;
-  }
-
-  if (!parsed.numero_palets || parsed.numero_palets < 1) {
-    parsed.numero_palets = 1;
-  }
-}
-
-// ===== LÍMITE SUPERIOR =====
-if (cajas > 400) {
-  cajas = 400;
-}
-
-parsed.cajas_estimadas = cajas;
-parsed.cajas_aprox = cajas;
-
-if (parsed.piezas_por_caja) {
-  parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
-  parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
-}
-
-const pesoPorCaja = 5.5;
-const taraPorCaja = 0.5;
-
-let taraPalet = 0;
-if (parsed.envase === 'palet con cajas') {
-  taraPalet = 20;
-}
-
-const esPalot = envase.includes('palot');
-
-const pesoBruto = esPalot
-  ? (parsed.peso_estimado_kg || 0)
-  : cajas * pesoPorCaja;
-
-const tara = esPalot
-  ? (parsed.tara_kg || 35)
-  : cajas * taraPorCaja + taraPalet;
-
-const pesoNeto = Math.max(0, pesoBruto - tara);
-
-parsed.peso_estimado_kg = pesoBruto;
-parsed.tara_kg = tara;
-parsed.peso_neto_kg = pesoNeto;
-
-// ===== MEDIDAS POR DEFECTO =====
-if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
-  if (envase.includes('caja') || envase.includes('palet')) {
-    parsed.medidas_caja = '60x40 cm aprox';
-  }
-}
-
-// ===== MEDIDAS PALET =====
-if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
-  if (envase.includes('palet')) {
-    parsed.medidas_palet = cajas >= 140
-      ? 'Palet industrial (120x100 cm aprox)'
-      : 'Europalet (120x80 cm aprox)';
-  }
-
-  if (envase.includes('palot')) {
-    parsed.medidas_palet = 'Palot estándar (120x100x75 cm aprox)';
-  }
-}
-
-parsed.numero_palets =
-  envase.includes('palet') || envase.includes('palot') ? 1 : 0;
-
-return parsed;
+  return this.finalizeVisionResult(parsed);
 
   } catch (error: any) {
     console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
