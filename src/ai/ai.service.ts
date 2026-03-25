@@ -74,6 +74,7 @@ export class AiService {
     if (envase.includes('palet')) {
       const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
       const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+      const normalizedEnvase = `${parsed.envase ?? ''}`.toLowerCase();
       const likelyIndustrial =
         palletMeasures.includes('120x100') ||
         boxMeasures.includes('60x40') ||
@@ -96,6 +97,14 @@ export class AiService {
         looksLikeUnderCountedIndustrialPallet
       ) {
         estimated = Math.max(estimated, 184);
+      }
+
+      if (
+        normalizedEnvase.includes('palet con cajas') &&
+        boxMeasures.includes('60x40') &&
+        estimated <= 120
+      ) {
+        estimated = 184;
       }
     }
 
