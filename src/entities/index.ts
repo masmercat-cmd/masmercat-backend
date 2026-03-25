@@ -6,3 +6,4 @@ export { Message, MessageStatus } from './message.entity';
 export { Log, EventType } from './log.entity';
 export { PriceHistory } from './price-history.entity';
 export { Alert } from './alert.entity';
+export { AiScanResult } from './ai-scan-result.entity';

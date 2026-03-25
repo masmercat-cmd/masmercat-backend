@@ -1,6 +1,7 @@
-import { Controller, Post, Body, Req } from '@nestjs/common';
+import { Controller, Post, Body, Get, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { AiService, ChatMessageDto } from './ai.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('ai')
 export class AiController {
@@ -98,5 +99,31 @@ if (!image) {
 
   return { ok: false, error: err?.message || 'Error interno analizando imagen' };
 }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('guardar-cambios')
+  async saveScanChanges(@Req() req: Request, @Body() body: any) {
+    try {
+      const user = req.user as any;
+      const saved = await this.aiService.saveScanResult(user.id, body ?? {});
+      return { ok: true, id: saved.id, updatedAt: saved.updatedAt };
+    } catch (err: any) {
+      console.log('❌ ERROR saveScanChanges:', err?.message || err);
+      return { ok: false, error: err?.message || 'Error interno guardando cambios' };
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('guardar-cambios')
+  async getLatestSavedScan(@Req() req: Request) {
+    try {
+      const user = req.user as any;
+      const result = await this.aiService.getLatestScanResult(user.id);
+      return { ok: true, result };
+    } catch (err: any) {
+      console.log('❌ ERROR getLatestSavedScan:', err?.message || err);
+      return { ok: false, error: err?.message || 'Error interno cargando cambios' };
+    }
   }
 }

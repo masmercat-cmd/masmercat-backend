@@ -1,7 +1,10 @@
 // CAMBIO FORZADO DEPLOY
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
 import OpenAI from 'openai';
+import { Repository } from 'typeorm';
+import { AiScanResult, User } from '../entities';
 
 export class ChatMessageDto {
   message: string;
@@ -269,6 +272,63 @@ export class AiService {
     return parsed;
   }
 
+  async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
+    const existing = await this.aiScanResultRepository.findOne({
+      where: { userId },
+      order: { updatedAt: 'DESC' },
+    });
+
+    const entity = existing ?? this.aiScanResultRepository.create({ userId });
+    entity.imagePath = payload?.image_path ?? payload?.imagePath ?? null;
+    entity.categoria = payload?.categoria ?? null;
+    entity.producto = payload?.producto ?? null;
+    entity.envase = payload?.envase ?? null;
+    entity.cajasAprox = Math.round(this.toNumber(payload?.cajas_aprox));
+    entity.piezasPorCaja = Math.round(this.toNumber(payload?.piezas_por_caja));
+    entity.cantidadAprox = Math.round(this.toNumber(payload?.cantidad_aprox));
+    entity.taraKg = this.toNumber(payload?.tara_kg);
+    entity.pesoBrutoKg = this.toNumber(payload?.peso_bruto_kg);
+    entity.pesoNetoKg = this.toNumber(payload?.peso_neto_kg);
+    entity.resultadoAi =
+      payload?.resultado_ai && typeof payload.resultado_ai === 'object'
+        ? payload.resultado_ai
+        : payload?.result && typeof payload.result === 'object'
+            ? payload.result
+            : null;
+
+    return this.aiScanResultRepository.save(entity);
+  }
+
+  async getLatestScanResult(userId: string): Promise<Record<string, any> | null> {
+    const saved = await this.aiScanResultRepository.findOne({
+      where: { userId },
+      order: { updatedAt: 'DESC' },
+    });
+
+    if (!saved) {
+      return null;
+    }
+
+    return {
+      id: saved.id,
+      image_path: saved.imagePath,
+      categoria: saved.categoria,
+      producto: saved.producto,
+      envase: saved.envase,
+      cajas_aprox: saved.cajasAprox,
+      cajas_estimadas: saved.cajasAprox,
+      piezas_por_caja: saved.piezasPorCaja,
+      cantidad_aprox: saved.cantidadAprox,
+      cantidad_total_piezas: saved.cantidadAprox,
+      tara_kg: saved.taraKg,
+      peso_bruto_kg: saved.pesoBrutoKg,
+      peso_neto_kg: saved.pesoNetoKg,
+      result: saved.resultadoAi,
+      resultado_ai: saved.resultadoAi,
+      updatedAt: saved.updatedAt,
+    };
+  }
+
   private systemPrompts: Record<string, string> = {
     es: `Eres Nara, el asistente virtual de MasMercat, una plataforma mayorista de comercio de frutas. 
 Tu objetivo es ayudar a usuarios (compradores y vendedores) a usar la aplicación y responder preguntas sobre frutas, mercados y temporadas.
@@ -359,7 +419,13 @@ Responda de maneira amigável, concisa e profissional em português.`,
 हिंदी में मित्रवत, संक्षिप्त और पेशेवर तरीके से जवाब दें।`,
   };
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    @InjectRepository(AiScanResult)
+    private aiScanResultRepository: Repository<AiScanResult>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+  ) {
     const apiKey =
       this.configService.get<string>('OPENAI_API_KEY') ||
       process.env.OPENAI_API_KEY;
