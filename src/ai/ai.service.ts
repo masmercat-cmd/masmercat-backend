@@ -85,7 +85,6 @@ export class AiService {
     if (envase.includes('palet')) {
       const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
       const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
-      const normalizedEnvase = `${parsed.envase ?? ''}`.toLowerCase();
       const likelyIndustrial =
         palletMeasures.includes('120x100') ||
         boxMeasures.includes('60x40') ||
@@ -107,17 +106,16 @@ export class AiService {
         (likelyIndustrial && looksLikeFullFrontFaceOnly) ||
         looksLikeUnderCountedIndustrialPallet
       ) {
-        estimated = Math.max(estimated, 184);
+        estimated = Math.max(estimated, structuralTotal);
       }
 
       if (
-        normalizedEnvase.includes('palet con cajas') &&
-        ((frontVisible >= 56 && frontVisible <= 72) ||
-            (existingBoxes >= 56 && existingBoxes <= 80) ||
-            boxMeasures.includes('60x40')) &&
-        estimated <= 120
+        likelyIndustrial &&
+        normalizedBoxesPerLayer > 0 &&
+        normalizedLayers > 0 &&
+        estimated < structuralTotal
       ) {
-        estimated = 184;
+        estimated = structuralTotal;
       }
     }
 
@@ -273,7 +271,11 @@ export class AiService {
     parsed.numero_palets =
       envase.includes('palet') || envase.includes('palot') ? 1 : 0;
 
-    if (envase.includes('palet') && boxes >= 184) {
+    if (
+      envase.includes('palet') &&
+      (`${parsed.medidas_palet ?? ''}`.toLowerCase().includes('120x100') ||
+          boxes >= 140)
+    ) {
       parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
     }
 
@@ -285,7 +287,7 @@ export class AiService {
     parsed: any,
     language: string,
   ): Promise<any> {
-    const lang = (language || 'es').substring(0, 2);
+    const lang = 'en';
     const prompt =
       lang === 'en'
         ? `You are reviewing a fruit pallet image because the first estimate may be undercounting boxes.
@@ -294,6 +296,7 @@ Return ONLY valid JSON with:
 {
   "columnas_visibles": 0,
   "filas_visibles": 0,
+  "profundidad_estimada": 0,
   "cajas_por_capa": 0,
   "capas_estimadas": 0,
   "cajas_superiores": 0,
@@ -304,17 +307,23 @@ Return ONLY valid JSON with:
 }
 
 Rules:
-- Count the visible front face first.
-- Infer the full pallet depth and total layers.
-- Do NOT return only the visible front boxes.
-- If the pallet is tall and densely packed, prefer the full commercial pallet total.
-- Distinguish europallet vs industrial pallet from footprint and number of boxes per layer.`
+- Count visible front columns.
+- Count visible front rows.
+- Estimate depth using the side face, top face, pallet footprint and packing pattern.
+- Compute cajas_por_capa = columnas_visibles x profundidad_estimada.
+- Compute cajas_estimadas = cajas_por_capa x capas_estimadas + cajas_superiores.
+- Do NOT return only front-visible boxes.
+- In a dense commercial pallet, assume hidden rear boxes exist.
+- If front is 4x5 and the pallet clearly has depth, cajas_por_capa should be much higher than 10.
+- Use realistic fruit-trade pallet totals, not edge-only counts.
+- Distinguish industrial pallet vs europallet from footprint and boxes per layer.`
         : `Estás revisando una imagen de palet de fruta porque la primera estimación puede estar contando pocas cajas.
 
 Devuelve SOLO JSON válido con:
 {
   "columnas_visibles": 0,
   "filas_visibles": 0,
+  "profundidad_estimada": 0,
   "cajas_por_capa": 0,
   "capas_estimadas": 0,
   "cajas_superiores": 0,
