@@ -101,7 +101,9 @@ export class AiService {
 
       if (
         normalizedEnvase.includes('palet con cajas') &&
-        boxMeasures.includes('60x40') &&
+        ((frontVisible >= 56 && frontVisible <= 72) ||
+            (existingBoxes >= 56 && existingBoxes <= 80) ||
+            boxMeasures.includes('60x40')) &&
         estimated <= 120
       ) {
         estimated = 184;
