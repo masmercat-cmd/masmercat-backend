@@ -59,24 +59,43 @@ export class AiService {
     );
     const visibleColumns = this.toNumber(parsed.columnas_visibles);
     const visibleRows = this.toNumber(parsed.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed.profundidad_estimada);
     const boxesPerLayer = this.toNumber(parsed.cajas_por_capa);
     const estimatedLayers = this.toNumber(parsed.capas_estimadas);
     const topBoxes = this.toNumber(parsed.cajas_superiores);
 
     const frontVisible =
       visibleColumns > 0 && visibleRows > 0 ? visibleColumns * visibleRows : 0;
-    const normalizedBoxesPerLayer = Math.max(boxesPerLayer, frontVisible);
+    const normalizedBoxesPerLayer = Math.max(
+      boxesPerLayer,
+      visibleColumns > 0 && estimatedDepth > 0
+        ? visibleColumns * estimatedDepth
+        : 0,
+      topBoxes,
+      frontVisible,
+    );
     const normalizedLayers = Math.max(
       estimatedLayers,
       envase.includes('palet') ? 1 : 0,
     );
 
+    const byFrontAndDepth =
+      visibleColumns > 0 && visibleRows > 0 && estimatedDepth > 0
+        ? visibleColumns * visibleRows * estimatedDepth
+        : 0;
+    const byTopAndRows =
+      topBoxes > 0 && visibleRows > 0 ? topBoxes * visibleRows : 0;
     const structuralTotal =
       normalizedBoxesPerLayer > 0
-        ? normalizedBoxesPerLayer * Math.max(normalizedLayers, 1) + topBoxes
+        ? normalizedBoxesPerLayer * Math.max(normalizedLayers, 1)
         : 0;
 
-    let estimated = Math.max(existingBoxes, structuralTotal);
+    let estimated = Math.max(
+      existingBoxes,
+      structuralTotal,
+      byFrontAndDepth,
+      byTopAndRows,
+    );
 
     if (envase.includes('palet') && estimated === 0 && frontVisible > 0) {
       estimated = frontVisible;
@@ -86,36 +105,18 @@ export class AiService {
       const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
       const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
       const likelyIndustrial =
-        palletMeasures.includes('120x100') ||
-        boxMeasures.includes('60x40') ||
-        normalizedBoxesPerLayer >= 28;
-
-      const looksLikeFullFrontFaceOnly =
-        frontVisible >= 56 &&
-        frontVisible <= 72 &&
-        estimated <= frontVisible + 8;
-
-      const looksLikeUnderCountedIndustrialPallet =
-        boxMeasures.includes('60x40') &&
-        estimated >= 72 &&
-        estimated <= 110;
-
-      // Full-height industrial pallets with 60x40 fruit boxes often land
-      // around 184 total boxes; this prevents returning only the visible face.
-      if (
-        (likelyIndustrial && looksLikeFullFrontFaceOnly) ||
-        looksLikeUnderCountedIndustrialPallet
-      ) {
-        estimated = Math.max(estimated, structuralTotal);
-      }
+        palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
 
       if (
         likelyIndustrial &&
-        normalizedBoxesPerLayer > 0 &&
-        normalizedLayers > 0 &&
-        estimated < structuralTotal
+        visibleColumns > 0 &&
+        visibleRows > 0 &&
+        estimatedDepth > 0
       ) {
-        estimated = structuralTotal;
+        estimated = Math.max(
+          estimated,
+          visibleColumns * visibleRows * estimatedDepth,
+        );
       }
     }
 
@@ -307,15 +308,16 @@ Return ONLY valid JSON with:
 }
 
 Rules:
-- Count visible front columns.
-- Count visible front rows.
-- Estimate depth using the side face, top face, pallet footprint and packing pattern.
+- Count the number of full front columns.
+- Count the number of full front rows in height.
+- Estimate depth from the visible side and top faces.
+- Use the top face to infer how many boxes fit in one full layer.
 - Compute cajas_por_capa = columnas_visibles x profundidad_estimada.
-- Compute cajas_estimadas = cajas_por_capa x capas_estimadas + cajas_superiores.
+- Compute cajas_estimadas = columnas_visibles x filas_visibles x profundidad_estimada.
+- If the top suggests 3 columns by 5 deep and the front is 6 high, the total should be close to 90.
 - Do NOT return only front-visible boxes.
 - In a dense commercial pallet, assume hidden rear boxes exist.
-- If front is 4x5 and the pallet clearly has depth, cajas_por_capa should be much higher than 10.
-- Use realistic fruit-trade pallet totals, not edge-only counts.
+- Prefer a coherent 3D pallet structure over a low visual-only count.
 - Distinguish industrial pallet vs europallet from footprint and boxes per layer.`
         : `Estás revisando una imagen de palet de fruta porque la primera estimación puede estar contando pocas cajas.
 
@@ -375,13 +377,12 @@ Reglas:
       columnas_visibles:
         refined.columnas_visibles ?? parsed.columnas_visibles,
       filas_visibles: refined.filas_visibles ?? parsed.filas_visibles,
+      profundidad_estimada:
+        refined.profundidad_estimada ?? parsed.profundidad_estimada,
       cajas_por_capa: refined.cajas_por_capa ?? parsed.cajas_por_capa,
       capas_estimadas: refined.capas_estimadas ?? parsed.capas_estimadas,
       cajas_superiores: refined.cajas_superiores ?? parsed.cajas_superiores,
-      cajas_estimadas: Math.max(
-        this.toNumber(parsed.cajas_estimadas ?? parsed.cajas_aprox),
-        this.toNumber(refined.cajas_estimadas),
-      ),
+      cajas_estimadas: this.toNumber(refined.cajas_estimadas),
     };
   }
 
