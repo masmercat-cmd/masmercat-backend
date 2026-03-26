@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { createHash } from 'crypto';
 import OpenAI from 'openai';
 import { Repository } from 'typeorm';
 import { AiScanResult, User } from '../entities';
@@ -47,6 +48,254 @@ export class AiService {
 
   private normalizeProducto(value: any): string {
     return `${value ?? ''}`.trim().toLowerCase();
+  }
+
+  private normalizeMeasure(value: any): string {
+    return `${value ?? ''}`
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/aproximado|aprox\.?/g, 'aprox')
+      .trim();
+  }
+
+  private buildImageHash(base64Image: string): string {
+    return createHash('sha256').update(base64Image).digest('hex');
+  }
+
+  private mapSavedScanResult(saved: AiScanResult): Record<string, any> {
+    return {
+      image_path: saved.imagePath,
+      image_hash: saved.imageHash,
+      categoria: saved.categoria,
+      producto: saved.producto,
+      envase: saved.envase,
+      cajas_aprox: saved.cajasAprox,
+      cajas_estimadas: saved.cajasAprox,
+      piezas_por_caja: saved.piezasPorCaja,
+      cantidad_aprox: saved.cantidadAprox,
+      cantidad_total_piezas: saved.cantidadAprox,
+      tara_kg: saved.taraKg,
+      peso_bruto_kg: saved.pesoBrutoKg,
+      peso_estimado_kg: saved.pesoBrutoKg,
+      peso_neto_kg: saved.pesoNetoKg,
+      resultado_ai: saved.resultadoAi,
+      result: saved.resultadoAi,
+      corregido_usuario: true,
+      updatedAt: saved.updatedAt,
+      ...(saved.resultadoAi ?? {}),
+    };
+  }
+
+  private extractPatternSource(scan: any): Record<string, any> {
+    const result =
+      scan?.resultadoAi && typeof scan.resultadoAi === 'object'
+        ? scan.resultadoAi
+        : scan?.result && typeof scan.result === 'object'
+          ? scan.result
+          : scan;
+
+    return result && typeof result === 'object' ? result : {};
+  }
+
+  private buildPatternFeatures(scan: any): Record<string, any> {
+    const source = this.extractPatternSource(scan);
+    const producto = this.normalizeProducto(scan?.producto ?? source.producto);
+    const envase = this.normalizeEnvase(scan?.envase ?? source.envase);
+    const medidasCaja = this.normalizeMeasure(
+      source.medidas_caja ?? scan?.medidasCaja,
+    );
+    const medidasPalet = this.normalizeMeasure(
+      source.medidas_palet ?? scan?.medidasPalet,
+    );
+    const columnas = this.toNumber(source.columnas_visibles);
+    const filas = this.toNumber(source.filas_visibles);
+    const profundidad = this.toNumber(source.profundidad_estimada);
+    const porCapa = this.toNumber(source.cajas_por_capa);
+    const superiores = this.toNumber(source.cajas_superiores);
+
+    return {
+      producto,
+      envase,
+      medidasCaja,
+      medidasPalet,
+      columnas,
+      filas,
+      profundidad,
+      porCapa,
+      superiores,
+      cajas: this.toNumber(scan?.cajasAprox ?? source.cajas_estimadas ?? source.cajas_aprox),
+      piezasPorCaja: this.toNumber(
+        scan?.piezasPorCaja ?? source.piezas_por_caja,
+      ),
+      pesoBruto: this.toNumber(
+        scan?.pesoBrutoKg ?? source.peso_bruto_kg ?? source.peso_estimado_kg,
+      ),
+      tara: this.toNumber(scan?.taraKg ?? source.tara_kg),
+    };
+  }
+
+  private computePatternScore(
+    baseline: Record<string, any>,
+    candidate: Record<string, any>,
+  ): number {
+    let score = 0;
+
+    if (!baseline.envase || baseline.envase !== candidate.envase) {
+      return 0;
+    }
+
+    score += 4;
+
+    if (baseline.producto && baseline.producto === candidate.producto) {
+      score += 4;
+    }
+
+    if (
+      baseline.medidasCaja &&
+      candidate.medidasCaja &&
+      baseline.medidasCaja === candidate.medidasCaja
+    ) {
+      score += 3;
+    }
+
+    if (
+      baseline.medidasPalet &&
+      candidate.medidasPalet &&
+      baseline.medidasPalet === candidate.medidasPalet
+    ) {
+      score += 3;
+    }
+
+    const numericPairs: Array<[number, number, number]> = [
+      [baseline.columnas, candidate.columnas, 2],
+      [baseline.filas, candidate.filas, 2],
+      [baseline.profundidad, candidate.profundidad, 2],
+      [baseline.porCapa, candidate.porCapa, 2],
+      [baseline.superiores, candidate.superiores, 1],
+    ];
+
+    for (const [a, b, weight] of numericPairs) {
+      if (a > 0 && b > 0) {
+        const diff = Math.abs(a - b);
+        if (diff === 0) score += weight;
+        else if (diff === 1) score += weight * 0.6;
+      }
+    }
+
+    return score;
+  }
+
+  private async findPatternCorrection(
+    result: Record<string, any>,
+    imageHash: string,
+  ): Promise<AiScanResult | null> {
+    const baseline = this.buildPatternFeatures(result);
+
+    if (!baseline.envase.includes('palet')) {
+      return null;
+    }
+
+    const candidates = await this.aiScanResultRepository.find({
+      where: { envase: result.envase ?? baseline.envase },
+      order: { updatedAt: 'DESC' },
+      take: 25,
+    });
+
+    let best: AiScanResult | null = null;
+    let bestScore = 0;
+
+    for (const candidate of candidates) {
+      if (candidate.imageHash && candidate.imageHash === imageHash) {
+        continue;
+      }
+
+      const score = this.computePatternScore(
+        baseline,
+        this.buildPatternFeatures(candidate),
+      );
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+
+    return bestScore >= 12 ? best : null;
+  }
+
+  private applyPatternCorrection(
+    result: Record<string, any>,
+    learned: AiScanResult,
+  ): Record<string, any> {
+    const corrected = { ...result };
+    const learnedPattern = this.buildPatternFeatures(learned);
+
+    if (learnedPattern.cajas > 0) {
+      corrected.cajas_estimadas = learnedPattern.cajas;
+      corrected.cajas_aprox = learnedPattern.cajas;
+    }
+
+    if (learnedPattern.piezasPorCaja > 0) {
+      corrected.piezas_por_caja = learnedPattern.piezasPorCaja;
+      corrected.cantidad_total_piezas =
+        learnedPattern.cajas > 0
+          ? learnedPattern.cajas * learnedPattern.piezasPorCaja
+          : this.toNumber(corrected.cantidad_total_piezas);
+      corrected.cantidad_aprox = corrected.cantidad_total_piezas;
+    }
+
+    if (learnedPattern.pesoBruto > 0) {
+      corrected.peso_bruto_kg = learnedPattern.pesoBruto;
+      corrected.peso_estimado_kg = learnedPattern.pesoBruto;
+    }
+
+    if (learnedPattern.tara > 0) {
+      corrected.tara_kg = learnedPattern.tara;
+    }
+
+    if (
+      this.toNumber(corrected.peso_bruto_kg) > 0 ||
+      this.toNumber(corrected.tara_kg) > 0
+    ) {
+      corrected.peso_neto_kg = Number(
+        Math.max(
+          0,
+          this.toNumber(corrected.peso_bruto_kg) -
+            this.toNumber(corrected.tara_kg),
+        ).toFixed(2),
+      );
+    }
+
+    corrected.aprendido_por_patron = true;
+    corrected.patron_referencia_id = learned.id;
+
+    return corrected;
+  }
+
+  private async findSavedCorrection(
+    imageHash: string,
+    imagePath?: string,
+  ): Promise<AiScanResult | null> {
+    if (imageHash) {
+      const byHash = await this.aiScanResultRepository.findOne({
+        where: { imageHash },
+        order: { updatedAt: 'DESC' },
+      });
+
+      if (byHash) {
+        return byHash;
+      }
+    }
+
+    const normalizedPath = `${imagePath ?? ''}`.trim();
+    if (!normalizedPath) {
+      return null;
+    }
+
+    return this.aiScanResultRepository.findOne({
+      where: { imagePath: normalizedPath },
+      order: { updatedAt: 'DESC' },
+    });
   }
 
   private estimateBoxes(parsed: any, envase: string): number {
@@ -387,13 +636,20 @@ Reglas:
   }
 
   async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
+    const imageHash =
+      `${payload?.image_hash ?? payload?.imageHash ?? payload?.resultado_ai?.image_hash ?? payload?.result?.image_hash ?? ''}`.trim() ||
+      null;
+    const imagePath =
+      `${payload?.image_path ?? payload?.imagePath ?? payload?.resultado_ai?.image_path ?? payload?.result?.image_path ?? ''}`.trim() ||
+      null;
     const existing = await this.aiScanResultRepository.findOne({
       where: { userId },
       order: { updatedAt: 'DESC' },
     });
 
     const entity = existing ?? this.aiScanResultRepository.create({ userId });
-    entity.imagePath = payload?.image_path ?? payload?.imagePath ?? null;
+    entity.imagePath = imagePath;
+    entity.imageHash = imageHash;
     entity.categoria = payload?.categoria ?? null;
     entity.producto = payload?.producto ?? null;
     entity.envase = payload?.envase ?? null;
@@ -426,6 +682,7 @@ Reglas:
     return {
       id: saved.id,
       image_path: saved.imagePath,
+      image_hash: saved.imageHash,
       categoria: saved.categoria,
       producto: saved.producto,
       envase: saved.envase,
@@ -588,12 +845,27 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
     }
   }
 
-  async analyzeFruitImage(base64Image: string, language: string = 'es'): Promise<any> {
+  async analyzeFruitImage(
+    base64Image: string,
+    language: string = 'es',
+    options?: { imagePath?: string },
+  ): Promise<any> {
   // Limpieza y normalización
   let img = (base64Image || '').trim();
 
   // Si viene como data URL, lo convertimos a base64 puro
   img = img.replace(/^data:image\/\w+;base64,/, '');
+  const imageHash = this.buildImageHash(img);
+  const savedCorrection = await this.findSavedCorrection(
+    imageHash,
+    options?.imagePath,
+  );
+
+  if (savedCorrection) {
+    const restored = this.mapSavedScanResult(savedCorrection);
+    this.logVisionSnapshot('Reused saved scan correction', restored);
+    return restored;
+  }
 
   const prompts: any = {
     es: `Analiza esta imagen de frutas o verduras.
@@ -834,7 +1106,18 @@ IMPORTANT:
       parsed = await this.refinePalletEstimate(img, parsed, lang);
     }
 
-    const finalized = this.finalizeVisionResult(parsed);
+    let finalized = this.finalizeVisionResult(parsed);
+    const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
+    if (learnedPattern) {
+      finalized = this.applyPatternCorrection(finalized, learnedPattern);
+      this.logVisionSnapshot('Applied pallet pattern correction', {
+        learnedFromId: learnedPattern.id,
+        cajas_estimadas: finalized.cajas_estimadas,
+      });
+    }
+
+    finalized.image_hash = imageHash;
+    finalized.image_path = options?.imagePath ?? null;
     this.logVisionSnapshot('Final pallet result attempt A', finalized);
     return finalized;
   } catch (error: any) {
@@ -876,7 +1159,18 @@ try {
     parsed = await this.refinePalletEstimate(img, parsed, lang);
   }
 
-  const finalized = this.finalizeVisionResult(parsed);
+  let finalized = this.finalizeVisionResult(parsed);
+  const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
+  if (learnedPattern) {
+    finalized = this.applyPatternCorrection(finalized, learnedPattern);
+    this.logVisionSnapshot('Applied pallet pattern correction', {
+      learnedFromId: learnedPattern.id,
+      cajas_estimadas: finalized.cajas_estimadas,
+    });
+  }
+
+  finalized.image_hash = imageHash;
+  finalized.image_path = options?.imagePath ?? null;
   this.logVisionSnapshot('Final pallet result attempt B', finalized);
   return finalized;
 
