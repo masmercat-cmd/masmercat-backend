@@ -24,6 +24,9 @@ export class AiScanResult {
   @Column({ type: 'text', nullable: true })
   imagePath: string | null;
 
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  imageHash: string | null;
+
   @Column({ length: 100, nullable: true })
   categoria: string | null;
 

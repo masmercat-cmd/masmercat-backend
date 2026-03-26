@@ -54,6 +54,11 @@ export class AiController {
       try { payload = JSON.parse(payload); } catch {}
     }
     const normalized = payload?.data ?? payload;
+    const imagePath =
+      normalized?.image_path ??
+      normalized?.imagePath ??
+      normalized?.path ??
+      null;
 console.log('🌍 language recibido:', normalized?.language);
 
     let image =
@@ -80,7 +85,8 @@ if (!image) {
    try {
   const result = await this.aiService.analyzeFruitImage(
   image,
-  normalized?.language || 'es'
+  normalized?.language || 'es',
+  { imagePath }
 );
 
   const payload = {
