@@ -144,10 +144,30 @@ export class AiService {
       return 0;
     }
 
-    score += 4;
+    if (!baseline.producto || !candidate.producto) {
+      return 0;
+    }
 
-    if (baseline.producto && baseline.producto === candidate.producto) {
-      score += 4;
+    if (baseline.producto !== candidate.producto) {
+      return 0;
+    }
+
+    score += 6;
+
+    if (
+      baseline.medidasPalet &&
+      candidate.medidasPalet &&
+      baseline.medidasPalet !== candidate.medidasPalet
+    ) {
+      return 0;
+    }
+
+    if (
+      baseline.medidasCaja &&
+      candidate.medidasCaja &&
+      baseline.medidasCaja !== candidate.medidasCaja
+    ) {
+      return 0;
     }
 
     if (
@@ -167,10 +187,10 @@ export class AiService {
     }
 
     const numericPairs: Array<[number, number, number]> = [
-      [baseline.columnas, candidate.columnas, 2],
-      [baseline.filas, candidate.filas, 2],
-      [baseline.profundidad, candidate.profundidad, 2],
-      [baseline.porCapa, candidate.porCapa, 2],
+      [baseline.columnas, candidate.columnas, 3],
+      [baseline.filas, candidate.filas, 3],
+      [baseline.profundidad, candidate.profundidad, 3],
+      [baseline.porCapa, candidate.porCapa, 3],
       [baseline.superiores, candidate.superiores, 1],
     ];
 
@@ -178,8 +198,17 @@ export class AiService {
       if (a > 0 && b > 0) {
         const diff = Math.abs(a - b);
         if (diff === 0) score += weight;
-        else if (diff === 1) score += weight * 0.6;
+        else if (diff === 1) score += weight * 0.4;
+        else if (diff >= 3 && weight >= 3) return 0;
       }
+    }
+
+    if (
+      baseline.piezasPorCaja > 0 &&
+      candidate.piezasPorCaja > 0 &&
+      baseline.piezasPorCaja === candidate.piezasPorCaja
+    ) {
+      score += 2;
     }
 
     return score;
@@ -220,7 +249,7 @@ export class AiService {
       }
     }
 
-    return bestScore >= 12 ? best : null;
+    return bestScore >= 18 ? best : null;
   }
 
   private applyPatternCorrection(
