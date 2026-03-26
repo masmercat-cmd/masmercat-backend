@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
-import { AiService, ChatMessageDto } from './ai.service';
+import { AiService, ChatMessageDto, TransportTariffDto } from './ai.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('ai')
@@ -105,6 +105,49 @@ if (!image) {
 
   return { ok: false, error: err?.message || 'Error interno analizando imagen' };
 }
+}
+
+  @Post('analyze-transport-tariff')
+  async analyzeTransportTariff(@Req() req: Request, @Body() body: any) {
+    console.log('🚚 ENTRO A /ai/analyze-transport-tariff');
+    console.log('Content-Type:', req.headers['content-type']);
+
+    let payload: any = body;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch {}
+    }
+    const normalized = payload?.data ?? payload;
+
+    const document =
+      normalized?.document ??
+      normalized?.image ??
+      normalized?.base64 ??
+      normalized?.file;
+
+    if (!document) {
+      return { ok: false, error: 'Falta document en el body' };
+    }
+
+    const dto: TransportTariffDto = {
+      document,
+      mimeType: normalized?.mime_type ?? normalized?.mimeType,
+      language: normalized?.language ?? 'es',
+      origin: normalized?.origin ?? '',
+      destination: normalized?.destination ?? '',
+      palletCount: Number(normalized?.pallet_count ?? normalized?.palletCount ?? 1),
+      palletType: normalized?.pallet_type ?? normalized?.palletType ?? '',
+    };
+
+    try {
+      const result = await this.aiService.analyzeTransportTariff(dto);
+      return { ok: true, result };
+    } catch (err: any) {
+      console.log('❌ ERROR analyzeTransportTariff:', err?.message || err);
+      return {
+        ok: false,
+        error: err?.message || 'Error interno analizando tarifa',
+      };
+    }
   }
 
   @UseGuards(JwtAuthGuard)

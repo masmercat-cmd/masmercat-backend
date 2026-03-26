@@ -12,6 +12,16 @@ export class ChatMessageDto {
   language?: string;
 }
 
+export class TransportTariffDto {
+  document: string;
+  mimeType?: string;
+  language?: string;
+  origin?: string;
+  destination?: string;
+  palletCount?: number;
+  palletType?: string;
+}
+
 @Injectable()
 export class AiService {
   private openai: OpenAI;
@@ -872,6 +882,122 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
 
       return fallbackMessages[language] || fallbackMessages.es;
     }
+  }
+
+  async analyzeTransportTariff(
+    tariffDto: TransportTariffDto,
+  ): Promise<Record<string, any>> {
+    const {
+      document,
+      mimeType = 'image/jpeg',
+      language = 'es',
+      origin = '',
+      destination = '',
+      palletCount = 1,
+      palletType = '',
+    } = tariffDto;
+
+    if (!document) {
+      throw new Error('Falta document');
+    }
+
+    if (!mimeType.startsWith('image/')) {
+      throw new Error(
+        'Por ahora la tarifa debe subirse como imagen. El soporte PDF vendra despues.',
+      );
+    }
+
+    const lang = (language || 'es').substring(0, 2);
+    const prompt = `Analyze this transport tariff image for fruit logistics.
+
+Return ONLY valid JSON with:
+{
+  "carrier": "",
+  "origin": "",
+  "destination": "",
+  "currency": "EUR",
+  "price_per_pallet": 0,
+  "industrial_multiplier": 1,
+  "fuel_increase_percent": 0,
+  "vat_percent": 21,
+  "notes": "",
+  "transport_cost": 0
+}
+
+Rules:
+- Extract visible carrier, route, currency and pallet pricing.
+- Use these context values if helpful:
+  origin: ${origin || 'not provided'}
+  destination: ${destination || 'not provided'}
+  pallet_count: ${palletCount || 1}
+  pallet_type: ${palletType || 'not provided'}
+- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier.
+- If there is a surcharge increase in percent, return it in fuel_increase_percent.
+- Compute transport_cost using:
+  price_per_pallet x pallet_count x industrial_multiplier x (1 + fuel_increase_percent/100)
+- If the pallet is not industrial, use multiplier 1.
+- If VAT is not visible, default to 21.
+- Be conservative and choose the clearest visible price.
+`;
+
+    const completion = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${mimeType};base64,${document}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 350,
+      temperature: 0,
+    });
+
+    const raw = completion.choices[0]?.message?.content || '{}';
+    const parsed = JSON.parse(raw);
+    this.logVisionSnapshot('OpenAI transport tariff JSON', parsed);
+
+    const basePrice = this.toNumber(
+      parsed.price_per_pallet ?? parsed.transport_cost,
+    );
+    const pallets = Math.max(1, this.toNumber(palletCount));
+    const isIndustrial = `${palletType ?? ''}`.toLowerCase().includes('120x100') ||
+      `${palletType ?? ''}`.toLowerCase().includes('industrial');
+    const multiplier = isIndustrial
+      ? Math.max(1, this.toNumber(parsed.industrial_multiplier) || 1)
+      : 1;
+    const fuelIncrease = this.toNumber(parsed.fuel_increase_percent);
+    const transportCost = Number(
+      (
+        basePrice *
+        pallets *
+        multiplier *
+        (1 + fuelIncrease / 100)
+      ).toFixed(2),
+    );
+
+    return {
+      carrier: `${parsed.carrier ?? ''}`.trim(),
+      origin: `${parsed.origin ?? origin ?? ''}`.trim(),
+      destination: `${parsed.destination ?? destination ?? ''}`.trim(),
+      currency: `${parsed.currency ?? 'EUR'}`.trim() || 'EUR',
+      price_per_pallet: Number(basePrice.toFixed(2)),
+      industrial_multiplier: Number(multiplier.toFixed(2)),
+      fuel_increase_percent: Number(fuelIncrease.toFixed(2)),
+      vat_percent: Number((this.toNumber(parsed.vat_percent) || 21).toFixed(2)),
+      notes: `${parsed.notes ?? ''}`.trim(),
+      pallet_count: pallets,
+      transport_cost: transportCost,
+      parsed_language: lang,
+    };
   }
 
   async analyzeFruitImage(
