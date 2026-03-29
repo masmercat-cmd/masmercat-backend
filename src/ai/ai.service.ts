@@ -991,18 +991,20 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
 
 Rules:
 - Extract visible carrier, route, currency and pallet pricing.
-	- Use these context values if helpful:
-	  origin: ${origin || 'not provided'}
-	  destination: ${destination || 'not provided'}
-	  pallet_count: ${palletCount || 1}
-	  pallet_type: ${palletType || 'not provided'}
-	- If the tariff shows multiple origin or destination zones, return them in origin_options and destination_options.
-	- If postal codes or postal code ranges are visible, return them in origin_postal_codes and destination_postal_codes.
-	- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier.
-- If there is a surcharge increase in percent, return it in fuel_increase_percent.
-- Compute transport_cost using:
-  price_per_pallet x pallet_count x industrial_multiplier x (1 + fuel_increase_percent/100)
-- If the pallet is not industrial, use multiplier 1.
+- Return the carrier company name exactly as printed on the tariff when visible.
+- If the tariff belongs to a company like Castillo, return "Castillo" in carrier.
+		- Use these context values if helpful:
+		  origin: ${origin || 'not provided'}
+		  destination: ${destination || 'not provided'}
+		  pallet_count: ${palletCount || 1}
+		  pallet_type: ${palletType || 'not provided'}
+		- If the tariff shows multiple origin or destination zones, return them in origin_options and destination_options.
+		- If postal codes or postal code ranges are visible, return them in origin_postal_codes and destination_postal_codes.
+		- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier as a decimal number, for example 1.27.
+	- If there is a surcharge increase in percent, return it in fuel_increase_percent.
+	- Compute transport_cost using:
+	  price_per_pallet x pallet_count x industrial_multiplier x (1 + fuel_increase_percent/100)
+	- If the pallet is not industrial, use multiplier 1.
 - If VAT is not visible, default to 21.
 - Be conservative and choose the clearest visible price.
 `;
