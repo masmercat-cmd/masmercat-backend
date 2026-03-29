@@ -739,6 +739,20 @@ Reglas:
     };
   }
 
+  async deleteSavedScanResults(userId: string): Promise<number> {
+    const results = await this.aiScanResultRepository.find({
+      where: { userId },
+      select: ['id'],
+    });
+
+    if (!results.length) {
+      return 0;
+    }
+
+    await this.aiScanResultRepository.delete({ userId });
+    return results.length;
+  }
+
   private systemPrompts: Record<string, string> = {
     es: `Eres Nara, el asistente virtual de MasMercat, una plataforma mayorista de comercio de frutas. 
 Tu objetivo es ayudar a usuarios (compradores y vendedores) a usar la aplicación y responder preguntas sobre frutas, mercados y temporadas.

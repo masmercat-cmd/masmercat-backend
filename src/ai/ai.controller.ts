@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, Get, Req, UseGuards, Delete } from '@nestjs/common';
 import type { Request } from 'express';
 import { AiService, ChatMessageDto, TransportTariffDto } from './ai.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -173,6 +173,19 @@ if (!image) {
     } catch (err: any) {
       console.log('❌ ERROR getLatestSavedScan:', err?.message || err);
       return { ok: false, error: err?.message || 'Error interno cargando cambios' };
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('guardar-cambios')
+  async deleteSavedScan(@Req() req: Request) {
+    try {
+      const user = req.user as any;
+      const deleted = await this.aiService.deleteSavedScanResults(user.id);
+      return { ok: true, deleted };
+    } catch (err: any) {
+      console.log('❌ ERROR deleteSavedScan:', err?.message || err);
+      return { ok: false, error: err?.message || 'Error interno borrando cambios' };
     }
   }
 }
