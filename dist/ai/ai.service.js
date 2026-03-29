@@ -8,20 +8,629 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AiService = exports.ChatMessageDto = void 0;
+exports.AiService = exports.TransportTariffDto = exports.ChatMessageDto = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
+const typeorm_1 = require("@nestjs/typeorm");
+const crypto_1 = require("crypto");
 const openai_1 = __importDefault(require("openai"));
+const typeorm_2 = require("typeorm");
+const entities_1 = require("../entities");
 class ChatMessageDto {
 }
 exports.ChatMessageDto = ChatMessageDto;
+class TransportTariffDto {
+}
+exports.TransportTariffDto = TransportTariffDto;
 let AiService = class AiService {
-    constructor(configService) {
+    logVisionSnapshot(label, payload) {
+        try {
+            console.log(`📦 ${label}:`, JSON.stringify(payload, null, 2));
+        }
+        catch {
+            console.log(`📦 ${label}:`, payload);
+        }
+    }
+    toNumber(value) {
+        if (typeof value === 'number') {
+            return Number.isFinite(value) ? value : 0;
+        }
+        if (typeof value === 'string') {
+            const normalized = value.replace(',', '.').trim();
+            const parsed = Number(normalized);
+            return Number.isFinite(parsed) ? parsed : 0;
+        }
+        return 0;
+    }
+    clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+    normalizeEnvase(value) {
+        return `${value ?? ''}`.trim().toLowerCase();
+    }
+    normalizeProducto(value) {
+        return `${value ?? ''}`.trim().toLowerCase();
+    }
+    normalizeMeasure(value) {
+        return `${value ?? ''}`
+            .toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/aproximado|aprox\.?/g, 'aprox')
+            .trim();
+    }
+    normalizeStringArray(value) {
+        const rawValues = Array.isArray(value)
+            ? value
+            : typeof value === 'string'
+                ? value.split(/[\n,;|/]+/g)
+                : [];
+        return rawValues
+            .map((entry) => `${entry ?? ''}`.trim())
+            .filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+    }
+    buildRouteOptions(primaryValue, explicitOptions, postalCodes) {
+        return [
+            ...this.normalizeStringArray(primaryValue),
+            ...this.normalizeStringArray(explicitOptions),
+            ...this.normalizeStringArray(postalCodes),
+        ].filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+    }
+    buildImageHash(base64Image) {
+        return (0, crypto_1.createHash)('sha256').update(base64Image).digest('hex');
+    }
+    mapSavedScanResult(saved) {
+        return {
+            image_path: saved.imagePath,
+            image_hash: saved.imageHash,
+            categoria: saved.categoria,
+            producto: saved.producto,
+            envase: saved.envase,
+            cajas_aprox: saved.cajasAprox,
+            cajas_estimadas: saved.cajasAprox,
+            piezas_por_caja: saved.piezasPorCaja,
+            cantidad_aprox: saved.cantidadAprox,
+            cantidad_total_piezas: saved.cantidadAprox,
+            tara_kg: saved.taraKg,
+            peso_bruto_kg: saved.pesoBrutoKg,
+            peso_estimado_kg: saved.pesoBrutoKg,
+            peso_neto_kg: saved.pesoNetoKg,
+            resultado_ai: saved.resultadoAi,
+            result: saved.resultadoAi,
+            corregido_usuario: true,
+            updatedAt: saved.updatedAt,
+            ...(saved.resultadoAi ?? {}),
+        };
+    }
+    extractPatternSource(scan) {
+        const result = scan?.resultadoAi && typeof scan.resultadoAi === 'object'
+            ? scan.resultadoAi
+            : scan?.result && typeof scan.result === 'object'
+                ? scan.result
+                : scan;
+        return result && typeof result === 'object' ? result : {};
+    }
+    buildPatternFeatures(scan) {
+        const source = this.extractPatternSource(scan);
+        const producto = this.normalizeProducto(scan?.producto ?? source.producto);
+        const envase = this.normalizeEnvase(scan?.envase ?? source.envase);
+        const medidasCaja = this.normalizeMeasure(source.medidas_caja ?? scan?.medidasCaja);
+        const medidasPalet = this.normalizeMeasure(source.medidas_palet ?? scan?.medidasPalet);
+        const columnas = this.toNumber(source.columnas_visibles);
+        const filas = this.toNumber(source.filas_visibles);
+        const profundidad = this.toNumber(source.profundidad_estimada);
+        const porCapa = this.toNumber(source.cajas_por_capa);
+        const superiores = this.toNumber(source.cajas_superiores);
+        return {
+            producto,
+            envase,
+            medidasCaja,
+            medidasPalet,
+            columnas,
+            filas,
+            profundidad,
+            porCapa,
+            superiores,
+            cajas: this.toNumber(scan?.cajasAprox ?? source.cajas_estimadas ?? source.cajas_aprox),
+            piezasPorCaja: this.toNumber(scan?.piezasPorCaja ?? source.piezas_por_caja),
+            pesoBruto: this.toNumber(scan?.pesoBrutoKg ?? source.peso_bruto_kg ?? source.peso_estimado_kg),
+            tara: this.toNumber(scan?.taraKg ?? source.tara_kg),
+        };
+    }
+    computePatternScore(baseline, candidate) {
+        let score = 0;
+        if (!baseline.envase || baseline.envase !== candidate.envase) {
+            return 0;
+        }
+        if (!baseline.producto || !candidate.producto) {
+            return 0;
+        }
+        if (baseline.producto !== candidate.producto) {
+            return 0;
+        }
+        score += 6;
+        if (baseline.medidasPalet &&
+            candidate.medidasPalet &&
+            baseline.medidasPalet !== candidate.medidasPalet) {
+            return 0;
+        }
+        if (baseline.medidasCaja &&
+            candidate.medidasCaja &&
+            baseline.medidasCaja !== candidate.medidasCaja) {
+            return 0;
+        }
+        if (baseline.medidasCaja &&
+            candidate.medidasCaja &&
+            baseline.medidasCaja === candidate.medidasCaja) {
+            score += 3;
+        }
+        if (baseline.medidasPalet &&
+            candidate.medidasPalet &&
+            baseline.medidasPalet === candidate.medidasPalet) {
+            score += 3;
+        }
+        const numericPairs = [
+            [baseline.columnas, candidate.columnas, 3],
+            [baseline.filas, candidate.filas, 3],
+            [baseline.profundidad, candidate.profundidad, 3],
+            [baseline.porCapa, candidate.porCapa, 3],
+            [baseline.superiores, candidate.superiores, 1],
+        ];
+        for (const [a, b, weight] of numericPairs) {
+            if (a > 0 && b > 0) {
+                const diff = Math.abs(a - b);
+                if (diff === 0)
+                    score += weight;
+                else if (diff === 1)
+                    score += weight * 0.4;
+                else if (diff >= 3 && weight >= 3)
+                    return 0;
+            }
+        }
+        if (baseline.piezasPorCaja > 0 &&
+            candidate.piezasPorCaja > 0 &&
+            baseline.piezasPorCaja === candidate.piezasPorCaja) {
+            score += 2;
+        }
+        return score;
+    }
+    async findPatternCorrection(result, imageHash) {
+        const baseline = this.buildPatternFeatures(result);
+        if (!baseline.envase.includes('palet')) {
+            return null;
+        }
+        const candidates = await this.aiScanResultRepository.find({
+            where: { envase: result.envase ?? baseline.envase },
+            order: { updatedAt: 'DESC' },
+            take: 25,
+        });
+        let best = null;
+        let bestScore = 0;
+        for (const candidate of candidates) {
+            if (candidate.imageHash && candidate.imageHash === imageHash) {
+                continue;
+            }
+            const score = this.computePatternScore(baseline, this.buildPatternFeatures(candidate));
+            if (score > bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+        return bestScore >= 18 ? best : null;
+    }
+    applyPatternCorrection(result, learned) {
+        const corrected = { ...result };
+        const learnedPattern = this.buildPatternFeatures(learned);
+        if (learnedPattern.cajas > 0) {
+            corrected.cajas_estimadas = learnedPattern.cajas;
+            corrected.cajas_aprox = learnedPattern.cajas;
+        }
+        if (learnedPattern.piezasPorCaja > 0) {
+            corrected.piezas_por_caja = learnedPattern.piezasPorCaja;
+            corrected.cantidad_total_piezas =
+                learnedPattern.cajas > 0
+                    ? learnedPattern.cajas * learnedPattern.piezasPorCaja
+                    : this.toNumber(corrected.cantidad_total_piezas);
+            corrected.cantidad_aprox = corrected.cantidad_total_piezas;
+        }
+        if (learnedPattern.pesoBruto > 0) {
+            corrected.peso_bruto_kg = learnedPattern.pesoBruto;
+            corrected.peso_estimado_kg = learnedPattern.pesoBruto;
+        }
+        if (learnedPattern.tara > 0) {
+            corrected.tara_kg = learnedPattern.tara;
+        }
+        if (this.toNumber(corrected.peso_bruto_kg) > 0 ||
+            this.toNumber(corrected.tara_kg) > 0) {
+            corrected.peso_neto_kg = Number(Math.max(0, this.toNumber(corrected.peso_bruto_kg) -
+                this.toNumber(corrected.tara_kg)).toFixed(2));
+        }
+        corrected.aprendido_por_patron = true;
+        corrected.patron_referencia_id = learned.id;
+        return corrected;
+    }
+    async findSavedCorrection(imageHash, imagePath) {
+        if (imageHash) {
+            const byHash = await this.aiScanResultRepository.findOne({
+                where: { imageHash },
+                order: { updatedAt: 'DESC' },
+            });
+            if (byHash) {
+                return byHash;
+            }
+        }
+        const normalizedPath = `${imagePath ?? ''}`.trim();
+        if (!normalizedPath) {
+            return null;
+        }
+        return this.aiScanResultRepository.findOne({
+            where: { imagePath: normalizedPath },
+            order: { updatedAt: 'DESC' },
+        });
+    }
+    estimateBoxes(parsed, envase) {
+        if (envase.includes('palot')) {
+            return 0;
+        }
+        const existingBoxes = this.toNumber(parsed.cajas_estimadas ?? parsed.cajas_aprox);
+        const visibleColumns = this.toNumber(parsed.columnas_visibles);
+        const visibleRows = this.toNumber(parsed.filas_visibles);
+        const estimatedDepth = this.toNumber(parsed.profundidad_estimada);
+        const boxesPerLayer = this.toNumber(parsed.cajas_por_capa);
+        const estimatedLayers = this.toNumber(parsed.capas_estimadas);
+        const topBoxes = this.toNumber(parsed.cajas_superiores);
+        const frontVisible = visibleColumns > 0 && visibleRows > 0 ? visibleColumns * visibleRows : 0;
+        const normalizedBoxesPerLayer = Math.max(boxesPerLayer, visibleColumns > 0 && estimatedDepth > 0
+            ? visibleColumns * estimatedDepth
+            : 0, topBoxes, frontVisible);
+        const normalizedLayers = Math.max(estimatedLayers, envase.includes('palet') ? 1 : 0);
+        const byFrontAndDepth = visibleColumns > 0 && visibleRows > 0 && estimatedDepth > 0
+            ? visibleColumns * visibleRows * estimatedDepth
+            : 0;
+        const byTopAndRows = topBoxes > 0 && visibleRows > 0 ? topBoxes * visibleRows : 0;
+        const structuralTotal = normalizedBoxesPerLayer > 0
+            ? normalizedBoxesPerLayer * Math.max(normalizedLayers, 1)
+            : 0;
+        let estimated = Math.max(existingBoxes, structuralTotal, byFrontAndDepth, byTopAndRows);
+        if (envase.includes('palet') && estimated === 0 && frontVisible > 0) {
+            estimated = frontVisible;
+        }
+        if (envase.includes('palet')) {
+            const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+            const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+            const likelyIndustrial = palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+            if (likelyIndustrial &&
+                visibleColumns > 0 &&
+                visibleRows > 0 &&
+                estimatedDepth > 0) {
+                estimated = Math.max(estimated, visibleColumns * visibleRows * estimatedDepth);
+            }
+        }
+        return Math.round(this.clamp(estimated, 0, 400));
+    }
+    inferBoxWeightKg(parsed, producto) {
+        const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
+        const avgPieceWeights = {
+            aguacate: 0.22,
+            albaricoque: 0.06,
+            berenjena: 0.3,
+            cereza: 0.012,
+            ciruela: 0.055,
+            fresa: 0.025,
+            frambuesa: 0.005,
+            granada: 0.35,
+            kiwi: 0.09,
+            limon: 0.12,
+            mandarina: 0.1,
+            manzana: 0.18,
+            melocoton: 0.17,
+            melon: 1.4,
+            naranja: 0.2,
+            nectarina: 0.16,
+            paraguayo: 0.14,
+            pera: 0.19,
+            pimiento: 0.18,
+            platano: 0.18,
+            sandia: 6.5,
+            tomate: 0.12,
+            uva: 0.007,
+        };
+        if (piecesPerBox > 0 && avgPieceWeights[producto]) {
+            return this.clamp(piecesPerBox * avgPieceWeights[producto], 2.5, 22);
+        }
+        const defaultWeights = {
+            aguacate: 4,
+            berenjena: 5,
+            cereza: 2.5,
+            fresa: 2,
+            kiwi: 3.2,
+            limon: 6,
+            mandarina: 7,
+            manzana: 8,
+            melocoton: 7,
+            melon: 10,
+            naranja: 8,
+            nectarina: 7,
+            paraguayo: 6,
+            pera: 8,
+            pimiento: 5,
+            platano: 18,
+            sandia: 18,
+            tomate: 6,
+            uva: 4.5,
+        };
+        return defaultWeights[producto] ?? 6.5;
+    }
+    inferTarePerBoxKg(parsed) {
+        const material = `${parsed.material_caja ?? ''}`.toLowerCase();
+        if (material.includes('madera'))
+            return 1.2;
+        if (material.includes('plast'))
+            return 0.8;
+        if (material.includes('cart'))
+            return 0.45;
+        return 0.6;
+    }
+    inferPalletTareKg(parsed, envase, boxes) {
+        if (envase.includes('palot')) {
+            return Math.max(this.toNumber(parsed.tara_kg), 35);
+        }
+        if (!envase.includes('palet')) {
+            return 0;
+        }
+        const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+        if (palletMeasures.includes('120x100') || boxes >= 140) {
+            return 22;
+        }
+        return 18;
+    }
+    finalizeVisionResult(parsed) {
+        let envase = this.normalizeEnvase(parsed.envase);
+        const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
+        const looseTerms = ['sin caja', 'suelto', 'suelta', 'loose', 'a granel'];
+        const looksLoose = looseTerms.some((term) => envase.includes(term)) ||
+            (!envase.includes('caja') &&
+                !envase.includes('palet') &&
+                !envase.includes('palot'));
+        if (looksLoose) {
+            envase = 'sin caja';
+            parsed.envase = 'sin caja';
+        }
+        const boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
+        const isPalot = envase.includes('palot');
+        const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
+        const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
+        const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
+        const aiGrossWeight = this.toNumber(parsed.peso_bruto_kg ?? parsed.peso_estimado_kg);
+        parsed.cajas_estimadas = boxes;
+        parsed.cajas_aprox = boxes;
+        const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
+        if (looksLoose) {
+            const visiblePieces = Math.max(this.toNumber(parsed.cantidad_total_piezas), this.toNumber(parsed.cantidad_aprox), this.toNumber(parsed.piezas_visibles), 1);
+            parsed.cajas_estimadas = 0;
+            parsed.cajas_aprox = 0;
+            parsed.piezas_por_caja = 0;
+            parsed.cantidad_total_piezas = Math.round(visiblePieces);
+            parsed.cantidad_aprox = Math.round(visiblePieces);
+        }
+        else if (boxes > 0 && piecesPerBox > 0) {
+            const totalPieces = Math.round(boxes * piecesPerBox);
+            parsed.cantidad_total_piezas = totalPieces;
+            parsed.cantidad_aprox = totalPieces;
+        }
+        let grossWeight = aiGrossWeight;
+        if (isPalot) {
+            grossWeight = Math.max(aiGrossWeight, 280);
+        }
+        else if (boxes > 0) {
+            const estimatedGross = boxes * boxWeightKg;
+            grossWeight =
+                aiGrossWeight > 0
+                    ? Number(((aiGrossWeight + estimatedGross) / 2).toFixed(2))
+                    : Number(estimatedGross.toFixed(2));
+        }
+        const tareWeight = isPalot
+            ? palletTareKg
+            : Number((boxes * tarePerBoxKg + palletTareKg).toFixed(2));
+        parsed.peso_bruto_kg = Number(grossWeight.toFixed(2));
+        parsed.peso_estimado_kg = Number(grossWeight.toFixed(2));
+        parsed.tara_kg = Number(tareWeight.toFixed(2));
+        parsed.peso_neto_kg = Number(Math.max(0, grossWeight - tareWeight).toFixed(2));
+        if (!parsed.medidas_caja || parsed.medidas_caja === 'por confirmar') {
+            if (envase.includes('caja') || envase.includes('palet')) {
+                parsed.medidas_caja = '60x40 cm aprox';
+            }
+        }
+        if (!parsed.medidas_palet || parsed.medidas_palet === 'por confirmar') {
+            if (envase.includes('palet')) {
+                parsed.medidas_palet =
+                    palletTareKg >= 22
+                        ? 'Palet industrial (120x100 cm aprox)'
+                        : 'Europalet (120x80 cm aprox)';
+            }
+            if (envase.includes('palot')) {
+                parsed.medidas_palet = 'Palot estandar (120x100x75 cm aprox)';
+            }
+        }
+        parsed.numero_palets =
+            envase.includes('palet') || envase.includes('palot') ? 1 : 0;
+        if (envase.includes('palet') &&
+            (`${parsed.medidas_palet ?? ''}`.toLowerCase().includes('120x100') ||
+                boxes >= 140)) {
+            parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+        }
+        return parsed;
+    }
+    async refinePalletEstimate(img, parsed, language) {
+        const lang = 'en';
+        const prompt = lang === 'en'
+            ? `You are reviewing a fruit pallet image because the first estimate may be undercounting boxes.
+
+Return ONLY valid JSON with:
+{
+  "columnas_visibles": 0,
+  "filas_visibles": 0,
+  "profundidad_estimada": 0,
+  "cajas_por_capa": 0,
+  "capas_estimadas": 0,
+  "cajas_superiores": 0,
+  "cajas_estimadas": 0,
+  "medidas_caja": "60x40 cm approx",
+  "medidas_palet": "Industrial pallet (120x100 cm approx) / Europallet (120x80 cm approx)",
+  "confianza_estimacion": "alta/media/baja"
+}
+
+Rules:
+- Count the number of full front columns.
+- Count the number of full front rows in height.
+- Estimate depth from the visible side and top faces.
+- Use the top face to infer how many boxes fit in one full layer.
+- Compute cajas_por_capa = columnas_visibles x profundidad_estimada.
+- Compute cajas_estimadas = columnas_visibles x filas_visibles x profundidad_estimada.
+- If the top suggests 3 columns by 5 deep and the front is 6 high, the total should be close to 90.
+- Do NOT return only front-visible boxes.
+- In a dense commercial pallet, assume hidden rear boxes exist.
+- Prefer a coherent 3D pallet structure over a low visual-only count.
+- Distinguish industrial pallet vs europallet from footprint and boxes per layer.`
+            : `Estás revisando una imagen de palet de fruta porque la primera estimación puede estar contando pocas cajas.
+
+Devuelve SOLO JSON válido con:
+{
+  "columnas_visibles": 0,
+  "filas_visibles": 0,
+  "profundidad_estimada": 0,
+  "cajas_por_capa": 0,
+  "capas_estimadas": 0,
+  "cajas_superiores": 0,
+  "cajas_estimadas": 0,
+  "medidas_caja": "60x40 cm aprox",
+  "medidas_palet": "Palet industrial (120x100 cm aprox) / Europalet (120x80 cm aprox)",
+  "confianza_estimacion": "alta/media/baja"
+}
+
+Reglas:
+- Cuenta primero la cara frontal visible.
+- Infiere la profundidad total del palet y las capas completas.
+- NO devuelvas solo las cajas visibles de frente.
+- Si el palet es alto y está muy lleno, prioriza el total comercial completo.
+- Distingue europalet y palet industrial por huella y cajas por capa.
+- Si ves un palet alto de caja 60x40 con frontal grande, evita respuestas como 64 si el total del volumen es mayor.`;
+        const completion = await this.openai.chat.completions.create({
+            model: 'gpt-4o',
+            response_format: { type: 'json_object' },
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: `${prompt}\n\nPrimera lectura previa:\n${JSON.stringify(parsed)}`,
+                        },
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:image/jpeg;base64,${img}`,
+                            },
+                        },
+                    ],
+                },
+            ],
+            max_tokens: 250,
+            temperature: 0,
+        });
+        const response = completion.choices[0]?.message?.content || '{}';
+        const refined = JSON.parse(response);
+        this.logVisionSnapshot('OpenAI refine pallet raw JSON', refined);
+        return {
+            ...parsed,
+            ...refined,
+            columnas_visibles: refined.columnas_visibles ?? parsed.columnas_visibles,
+            filas_visibles: refined.filas_visibles ?? parsed.filas_visibles,
+            profundidad_estimada: refined.profundidad_estimada ?? parsed.profundidad_estimada,
+            cajas_por_capa: refined.cajas_por_capa ?? parsed.cajas_por_capa,
+            capas_estimadas: refined.capas_estimadas ?? parsed.capas_estimadas,
+            cajas_superiores: refined.cajas_superiores ?? parsed.cajas_superiores,
+            cajas_estimadas: this.toNumber(refined.cajas_estimadas),
+        };
+    }
+    async saveScanResult(userId, payload) {
+        const imageHash = `${payload?.image_hash ?? payload?.imageHash ?? payload?.resultado_ai?.image_hash ?? payload?.result?.image_hash ?? ''}`.trim() ||
+            null;
+        const imagePath = `${payload?.image_path ?? payload?.imagePath ?? payload?.resultado_ai?.image_path ?? payload?.result?.image_path ?? ''}`.trim() ||
+            null;
+        const existing = await this.aiScanResultRepository.findOne({
+            where: { userId },
+            order: { updatedAt: 'DESC' },
+        });
+        const entity = existing ?? this.aiScanResultRepository.create({ userId });
+        entity.imagePath = imagePath;
+        entity.imageHash = imageHash;
+        entity.categoria = payload?.categoria ?? null;
+        entity.producto = payload?.producto ?? null;
+        entity.envase = payload?.envase ?? null;
+        entity.cajasAprox = Math.round(this.toNumber(payload?.cajas_aprox));
+        entity.piezasPorCaja = Math.round(this.toNumber(payload?.piezas_por_caja));
+        entity.cantidadAprox = Math.round(this.toNumber(payload?.cantidad_aprox));
+        entity.taraKg = this.toNumber(payload?.tara_kg);
+        entity.pesoBrutoKg = this.toNumber(payload?.peso_bruto_kg);
+        entity.pesoNetoKg = this.toNumber(payload?.peso_neto_kg);
+        entity.resultadoAi =
+            payload?.resultado_ai && typeof payload.resultado_ai === 'object'
+                ? payload.resultado_ai
+                : payload?.result && typeof payload.result === 'object'
+                    ? payload.result
+                    : null;
+        return this.aiScanResultRepository.save(entity);
+    }
+    async getLatestScanResult(userId) {
+        const saved = await this.aiScanResultRepository.findOne({
+            where: { userId },
+            order: { updatedAt: 'DESC' },
+        });
+        if (!saved) {
+            return null;
+        }
+        return {
+            id: saved.id,
+            image_path: saved.imagePath,
+            image_hash: saved.imageHash,
+            categoria: saved.categoria,
+            producto: saved.producto,
+            envase: saved.envase,
+            cajas_aprox: saved.cajasAprox,
+            cajas_estimadas: saved.cajasAprox,
+            piezas_por_caja: saved.piezasPorCaja,
+            cantidad_aprox: saved.cantidadAprox,
+            cantidad_total_piezas: saved.cantidadAprox,
+            tara_kg: saved.taraKg,
+            peso_bruto_kg: saved.pesoBrutoKg,
+            peso_neto_kg: saved.pesoNetoKg,
+            result: saved.resultadoAi,
+            resultado_ai: saved.resultadoAi,
+            updatedAt: saved.updatedAt,
+        };
+    }
+    async deleteSavedScanResults(userId) {
+        const results = await this.aiScanResultRepository.find({
+            where: { userId },
+            select: ['id'],
+        });
+        if (!results.length) {
+            return 0;
+        }
+        await this.aiScanResultRepository.delete({ userId });
+        return results.length;
+    }
+    constructor(configService, aiScanResultRepository, userRepository) {
         this.configService = configService;
+        this.aiScanResultRepository = aiScanResultRepository;
+        this.userRepository = userRepository;
         this.systemPrompts = {
             es: `Eres Nara, el asistente virtual de MasMercat, una plataforma mayorista de comercio de frutas. 
 Tu objetivo es ayudar a usuarios (compradores y vendedores) a usar la aplicación y responder preguntas sobre frutas, mercados y temporadas.
@@ -124,7 +733,7 @@ Responda de maneira amigável, concisa e profissional em português.`,
                 temperature: 0.7,
                 max_tokens: 500,
             });
-            completion.choices[0]?.message?.content || '';
+            return completion.choices[0]?.message?.content || '';
         }
         catch (error) {
             console.error('❌ OpenAI chat error:', error?.message || error);
@@ -142,9 +751,118 @@ Responda de maneira amigável, concisa e profissional em português.`,
             return fallbackMessages[language] || fallbackMessages.es;
         }
     }
-    async analyzeFruitImage(base64Image, language = 'es') {
+    async analyzeTransportTariff(tariffDto) {
+        const { document, mimeType = 'image/jpeg', language = 'es', origin = '', destination = '', palletCount = 1, palletType = '', } = tariffDto;
+        if (!document) {
+            throw new Error('Falta document');
+        }
+        if (!mimeType.startsWith('image/')) {
+            throw new Error('Por ahora la tarifa debe subirse como imagen. El soporte PDF vendra despues.');
+        }
+        const lang = (language || 'es').substring(0, 2);
+        const prompt = `Analyze this transport tariff image for fruit logistics.
+
+	Return ONLY valid JSON with:
+	{
+	  "carrier": "",
+	  "origin": "",
+	  "destination": "",
+	  "origin_options": [],
+	  "destination_options": [],
+	  "origin_postal_codes": [],
+	  "destination_postal_codes": [],
+	  "currency": "EUR",
+	  "price_per_pallet": 0,
+	  "industrial_multiplier": 1,
+  "fuel_increase_percent": 0,
+  "vat_percent": 21,
+  "notes": "",
+  "transport_cost": 0
+}
+
+Rules:
+- Extract visible carrier, route, currency and pallet pricing.
+	- Use these context values if helpful:
+	  origin: ${origin || 'not provided'}
+	  destination: ${destination || 'not provided'}
+	  pallet_count: ${palletCount || 1}
+	  pallet_type: ${palletType || 'not provided'}
+	- If the tariff shows multiple origin or destination zones, return them in origin_options and destination_options.
+	- If postal codes or postal code ranges are visible, return them in origin_postal_codes and destination_postal_codes.
+	- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier.
+- If there is a surcharge increase in percent, return it in fuel_increase_percent.
+- Compute transport_cost using:
+  price_per_pallet x pallet_count x industrial_multiplier x (1 + fuel_increase_percent/100)
+- If the pallet is not industrial, use multiplier 1.
+- If VAT is not visible, default to 21.
+- Be conservative and choose the clearest visible price.
+`;
+        const completion = await this.openai.chat.completions.create({
+            model: 'gpt-4o',
+            response_format: { type: 'json_object' },
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:${mimeType};base64,${document}`,
+                            },
+                        },
+                    ],
+                },
+            ],
+            max_tokens: 350,
+            temperature: 0,
+        });
+        const raw = completion.choices[0]?.message?.content || '{}';
+        const parsed = JSON.parse(raw);
+        this.logVisionSnapshot('OpenAI transport tariff JSON', parsed);
+        const basePrice = this.toNumber(parsed.price_per_pallet ?? parsed.transport_cost);
+        const pallets = Math.max(1, this.toNumber(palletCount));
+        const isIndustrial = `${palletType ?? ''}`.toLowerCase().includes('120x100') ||
+            `${palletType ?? ''}`.toLowerCase().includes('industrial');
+        const multiplier = isIndustrial
+            ? Math.max(1, this.toNumber(parsed.industrial_multiplier) || 1)
+            : 1;
+        const fuelIncrease = this.toNumber(parsed.fuel_increase_percent);
+        const transportCost = Number((basePrice *
+            pallets *
+            multiplier *
+            (1 + fuelIncrease / 100)).toFixed(2));
+        const originOptions = this.buildRouteOptions(parsed.origin, parsed.origin_options, parsed.origin_postal_codes);
+        const destinationOptions = this.buildRouteOptions(parsed.destination, parsed.destination_options, parsed.destination_postal_codes);
+        return {
+            carrier: `${parsed.carrier ?? ''}`.trim(),
+            origin: `${parsed.origin ?? origin ?? ''}`.trim(),
+            destination: `${parsed.destination ?? destination ?? ''}`.trim(),
+            origin_options: originOptions,
+            destination_options: destinationOptions,
+            origin_postal_codes: this.normalizeStringArray(parsed.origin_postal_codes),
+            destination_postal_codes: this.normalizeStringArray(parsed.destination_postal_codes),
+            currency: `${parsed.currency ?? 'EUR'}`.trim() || 'EUR',
+            price_per_pallet: Number(basePrice.toFixed(2)),
+            industrial_multiplier: Number(multiplier.toFixed(2)),
+            fuel_increase_percent: Number(fuelIncrease.toFixed(2)),
+            vat_percent: Number((this.toNumber(parsed.vat_percent) || 21).toFixed(2)),
+            notes: `${parsed.notes ?? ''}`.trim(),
+            pallet_count: pallets,
+            transport_cost: transportCost,
+            parsed_language: lang,
+        };
+    }
+    async analyzeFruitImage(base64Image, language = 'es', options) {
         let img = (base64Image || '').trim();
         img = img.replace(/^data:image\/\w+;base64,/, '');
+        const imageHash = this.buildImageHash(img);
+        const savedCorrection = await this.findSavedCorrection(imageHash, options?.imagePath);
+        if (savedCorrection) {
+            const restored = this.mapSavedScanResult(savedCorrection);
+            this.logVisionSnapshot('Reused saved scan correction', restored);
+            return restored;
+        }
         const prompts = {
             es: `Analiza esta imagen de frutas o verduras.
 
@@ -177,11 +895,18 @@ Identifica:
    - trufa
    - etc.
 
-3. Tipo de envase detectado:
-   - caja
-   - varias cajas
-   - palet con cajas
-   - palot
+	3. Tipo de envase detectado:
+	   - sin caja
+	   - caja
+	   - varias cajas
+	   - palet con cajas
+	   - palot
+
+	Si solo ves fruta suelta o una sola fruta sin caja, devuelve:
+	- "envase": "sin caja"
+	- "cajas_estimadas": 0
+	- "piezas_por_caja": 0
+	- "cantidad_total_piezas": el numero visible de frutas en la foto
 
 4. Material del envase o caja si se aprecia:
    - cartón
@@ -261,7 +986,7 @@ Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
 {
   "categoria": "fruta/verdura/hongo",
   "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",
-  "envase": "caja/varias cajas/palet con cajas/palot",
+	  "envase": "sin caja/caja/varias cajas/palet con cajas/palot",
   "material_caja": "carton/madera/plastico/desconocido",
   "columnas_visibles": 0,
   "filas_visibles": 0,
@@ -299,7 +1024,7 @@ Identify:
 4. Estimate pieces per box
 5. Estimated total weight in kg
 6. Quality (extra, first, second)
-7. Packaging type (box, pallet with boxes, loose)
+	7. Packaging type (without box, box, pallet with boxes, loose)
 8. Box dimensions (e.g. "60x40 cm approx")
 9. Pallet dimensions if present (e.g. "120x100 cm approx")
 
@@ -327,7 +1052,8 @@ IMPORTANT:
 - Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
 - If the pallet is full height and densely stacked, avoid low counts.
 - Prefer realistic commercial pallet counts for fruit boxes.
-- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
+	- If the image only shows loose fruit or a single fruit without packaging, return packaging as "without box", set cajas_estimadas to 0 and set cantidad_total_piezas to the visible fruit count.
+	- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
 - Do not count only the front-visible boxes.
 - For full pallets, prioritize total pallet structure over partial face visibility.
 `,
@@ -365,59 +1091,33 @@ IMPORTANT:
             const response = completion.choices[0]?.message?.content || '{}';
             console.log('📨 OpenAI content (attempt A):', response);
             console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
-            const parsed = JSON.parse(response);
-            let cajas = parsed.cajas_estimadas ??
-                parsed.cajas_aprox ??
-                0;
-            const envase = (parsed.envase || '').toLowerCase();
-            if (envase.includes('palet')) {
-                if (cajas > 0 && cajas < 60) {
-                    cajas = Math.round(cajas * 2.5);
-                }
-                if (cajas < 80) {
-                    cajas = Math.max(cajas, 100);
-                }
-                if (cajas >= 100 && cajas < 140) {
-                    cajas = Math.round(cajas * 1.3);
-                }
+            let parsed = JSON.parse(response);
+            this.logVisionSnapshot('OpenAI attempt A raw JSON', parsed);
+            const envaseInicial = this.normalizeEnvase(parsed.envase);
+            const cajasIniciales = this.toNumber(parsed.cajas_estimadas ?? parsed.cajas_aprox);
+            if (envaseInicial.includes('palet') && cajasIniciales <= 120) {
+                parsed = await this.refinePalletEstimate(img, parsed, lang);
             }
-            if (envase.includes('palot')) {
-                cajas = 0;
-                if (!parsed.peso_estimado_kg || parsed.peso_estimado_kg < 100) {
-                    parsed.peso_estimado_kg = 300;
-                }
+            let finalized = this.finalizeVisionResult(parsed);
+            const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
+            if (learnedPattern) {
+                finalized = this.applyPatternCorrection(finalized, learnedPattern);
+                this.logVisionSnapshot('Applied pallet pattern correction', {
+                    learnedFromId: learnedPattern.id,
+                    cajas_estimadas: finalized.cajas_estimadas,
+                });
             }
-            if (cajas > 400) {
-                cajas = 400;
-            }
-            parsed.cajas_estimadas = cajas;
-            parsed.cajas_aprox = cajas;
-            if (parsed.piezas_por_caja) {
-                parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
-                parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
-            }
-            const pesoPorCaja = 5;
-            const taraPorCaja = 0.5;
-            let taraPalet = 0;
-            if (parsed.envase === 'palet con cajas') {
-                taraPalet = 20;
-            }
-            const pesoBruto = cajas * pesoPorCaja;
-            const tara = cajas * taraPorCaja + taraPalet;
-            const pesoNeto = pesoBruto - tara;
-            parsed.peso_estimado_kg = pesoBruto;
-            parsed.tara_kg = tara;
-            parsed.peso_neto_kg = pesoNeto;
-            parsed.numero_palets =
-                parsed.envase === 'palet con cajas' ? 1 : 0;
-            return parsed;
+            finalized.image_hash = imageHash;
+            finalized.image_path = options?.imagePath ?? null;
+            this.logVisionSnapshot('Final pallet result attempt A', finalized);
+            return finalized;
         }
         catch (error) {
             console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
             console.error('❌ details:', error?.response?.data || error?.response || error);
         }
         try {
-            const completion = await this.openai.chat.completions.create({
+            const completionResponse = await this.openai.chat.completions.create({
                 model: 'gpt-4o',
                 response_format: { type: 'json_object' },
                 messages: [
@@ -432,46 +1132,29 @@ IMPORTANT:
                 max_tokens: 500,
                 temperature: 0,
             });
-            const response = completion.choices[0]?.message?.content || '{}';
-            const parsed = JSON.parse(response);
-            let cajas = parsed.cajas_estimadas ??
-                parsed.cajas_aprox ??
-                0;
-            parsed.cajas_estimadas = cajas;
-            parsed.cajas_aprox = cajas;
-            if (parsed.piezas_por_caja) {
-                parsed.cantidad_total_piezas = cajas * parsed.piezas_por_caja;
-                parsed.cantidad_aprox = cajas * parsed.piezas_por_caja;
+            const response = completionResponse.choices[0]?.message?.content || '{}';
+            console.log('📄 OpenAI content (attempt B):', response);
+            console.log('📄 OpenAI parsed JSON:', JSON.parse(response));
+            let parsed = JSON.parse(response);
+            this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
+            const envaseInicial = this.normalizeEnvase(parsed.envase);
+            const cajasIniciales = this.toNumber(parsed.cajas_estimadas ?? parsed.cajas_aprox);
+            if (envaseInicial.includes('palet') && cajasIniciales <= 120) {
+                parsed = await this.refinePalletEstimate(img, parsed, lang);
             }
-            const pesoPorCaja = 5;
-            const taraPorCaja = 0.5;
-            let taraPalet = 0;
-            const envase = (parsed.envase || '').toLowerCase();
-            parsed.numero_palets = envase.includes('palet') ? 1 : 0;
-            if (envase.includes('caja')) {
-                parsed.medidas_caja = '60x40 cm aprox';
+            let finalized = this.finalizeVisionResult(parsed);
+            const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
+            if (learnedPattern) {
+                finalized = this.applyPatternCorrection(finalized, learnedPattern);
+                this.logVisionSnapshot('Applied pallet pattern correction', {
+                    learnedFromId: learnedPattern.id,
+                    cajas_estimadas: finalized.cajas_estimadas,
+                });
             }
-            else {
-                parsed.medidas_caja = 'por confirmar';
-            }
-            if (envase.includes('palet')) {
-                if (envase.includes('industrial') || cajas >= 80) {
-                    parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
-                }
-                else {
-                    parsed.medidas_palet = 'Europalet (120x80 cm aprox)';
-                }
-            }
-            else {
-                parsed.medidas_palet = 'no aplica';
-            }
-            const pesoBruto = cajas * pesoPorCaja;
-            const tara = cajas * taraPorCaja + taraPalet;
-            const pesoNeto = pesoBruto - tara;
-            parsed.peso_estimado_kg = pesoBruto;
-            parsed.tara_kg = tara;
-            parsed.peso_neto_kg = pesoNeto;
-            return parsed;
+            finalized.image_hash = imageHash;
+            finalized.image_path = options?.imagePath ?? null;
+            this.logVisionSnapshot('Final pallet result attempt B', finalized);
+            return finalized;
         }
         catch (error) {
             console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
@@ -483,6 +1166,10 @@ IMPORTANT:
 exports.AiService = AiService;
 exports.AiService = AiService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [config_1.ConfigService])
+    __param(1, (0, typeorm_1.InjectRepository)(entities_1.AiScanResult)),
+    __param(2, (0, typeorm_1.InjectRepository)(entities_1.User)),
+    __metadata("design:paramtypes", [config_1.ConfigService,
+        typeorm_2.Repository,
+        typeorm_2.Repository])
 ], AiService);
 //# sourceMappingURL=ai.service.js.map

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Alert = exports.PriceHistory = exports.EventType = exports.Log = exports.MessageStatus = exports.Message = exports.QualityGrade = exports.UnitType = exports.LotStatus = exports.Lot = exports.Market = exports.Fruit = exports.Language = exports.UserRole = exports.User = void 0;
+exports.AiScanResult = exports.Alert = exports.PriceHistory = exports.EventType = exports.Log = exports.MessageStatus = exports.Message = exports.QualityGrade = exports.UnitType = exports.LotStatus = exports.Lot = exports.Market = exports.Fruit = exports.Language = exports.UserRole = exports.User = void 0;
 var user_entity_1 = require("./user.entity");
 Object.defineProperty(exports, "User", { enumerable: true, get: function () { return user_entity_1.User; } });
 Object.defineProperty(exports, "UserRole", { enumerable: true, get: function () { return user_entity_1.UserRole; } });
@@ -24,4 +24,6 @@ var price_history_entity_1 = require("./price-history.entity");
 Object.defineProperty(exports, "PriceHistory", { enumerable: true, get: function () { return price_history_entity_1.PriceHistory; } });
 var alert_entity_1 = require("./alert.entity");
 Object.defineProperty(exports, "Alert", { enumerable: true, get: function () { return alert_entity_1.Alert; } });
+var ai_scan_result_entity_1 = require("./ai-scan-result.entity");
+Object.defineProperty(exports, "AiScanResult", { enumerable: true, get: function () { return ai_scan_result_entity_1.AiScanResult; } });
 //# sourceMappingURL=index.js.map

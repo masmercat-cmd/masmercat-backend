@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AiController = void 0;
 const common_1 = require("@nestjs/common");
 const ai_service_1 = require("./ai.service");
+const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 let AiController = class AiController {
     constructor(aiService) {
         this.aiService = aiService;
@@ -62,6 +63,10 @@ let AiController = class AiController {
             catch { }
         }
         const normalized = payload?.data ?? payload;
+        const imagePath = normalized?.image_path ??
+            normalized?.imagePath ??
+            normalized?.path ??
+            null;
         console.log('🌍 language recibido:', normalized?.language);
         let image = normalized?.image ??
             normalized?.imageBase64 ??
@@ -80,7 +85,7 @@ let AiController = class AiController {
         console.log('📏 image length:', image.length);
         console.log('🔎 image first 30 chars:', String(image).slice(0, 30));
         try {
-            const result = await this.aiService.analyzeFruitImage(image, normalized?.language || 'es');
+            const result = await this.aiService.analyzeFruitImage(image, normalized?.language || 'es', { imagePath });
             const payload = {
                 ok: true,
                 result,
@@ -94,6 +99,78 @@ let AiController = class AiController {
             console.log('❌ ERROR analyzeFruitImage:', err?.message || err);
             console.log('❌ ERROR details:', err?.response?.data || err?.response || err);
             return { ok: false, error: err?.message || 'Error interno analizando imagen' };
+        }
+    }
+    async analyzeTransportTariff(req, body) {
+        console.log('🚚 ENTRO A /ai/analyze-transport-tariff');
+        console.log('Content-Type:', req.headers['content-type']);
+        let payload = body;
+        if (typeof payload === 'string') {
+            try {
+                payload = JSON.parse(payload);
+            }
+            catch { }
+        }
+        const normalized = payload?.data ?? payload;
+        const document = normalized?.document ??
+            normalized?.image ??
+            normalized?.base64 ??
+            normalized?.file;
+        if (!document) {
+            return { ok: false, error: 'Falta document en el body' };
+        }
+        const dto = {
+            document,
+            mimeType: normalized?.mime_type ?? normalized?.mimeType,
+            language: normalized?.language ?? 'es',
+            origin: normalized?.origin ?? '',
+            destination: normalized?.destination ?? '',
+            palletCount: Number(normalized?.pallet_count ?? normalized?.palletCount ?? 1),
+            palletType: normalized?.pallet_type ?? normalized?.palletType ?? '',
+        };
+        try {
+            const result = await this.aiService.analyzeTransportTariff(dto);
+            return { ok: true, result };
+        }
+        catch (err) {
+            console.log('❌ ERROR analyzeTransportTariff:', err?.message || err);
+            return {
+                ok: false,
+                error: err?.message || 'Error interno analizando tarifa',
+            };
+        }
+    }
+    async saveScanChanges(req, body) {
+        try {
+            const user = req.user;
+            const saved = await this.aiService.saveScanResult(user.id, body ?? {});
+            return { ok: true, id: saved.id, updatedAt: saved.updatedAt };
+        }
+        catch (err) {
+            console.log('❌ ERROR saveScanChanges:', err?.message || err);
+            return { ok: false, error: err?.message || 'Error interno guardando cambios' };
+        }
+    }
+    async getLatestSavedScan(req) {
+        try {
+            const user = req.user;
+            const result = await this.aiService.getLatestScanResult(user.id);
+            return { ok: true, result };
+        }
+        catch (err) {
+            console.log('❌ ERROR getLatestSavedScan:', err?.message || err);
+            return { ok: false, error: err?.message || 'Error interno cargando cambios' };
+        }
+    }
+    async deleteSavedScan(req) {
+        try {
+            const user = req.user;
+            const deleted = await this.aiService.deleteSavedScanResults(user.id);
+            return { ok: true, deleted };
+        }
+        catch (err) {
+            console.log('❌ ERROR deleteSavedScan:', err?.message || err);
+            return { ok: false, error: err?.message || 'Error interno borrando cambios' };
         }
     }
 };
@@ -114,6 +191,39 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], AiController.prototype, "analyzeFruit", null);
+__decorate([
+    (0, common_1.Post)('analyze-transport-tariff'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], AiController.prototype, "analyzeTransportTariff", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('guardar-cambios'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], AiController.prototype, "saveScanChanges", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)('guardar-cambios'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AiController.prototype, "getLatestSavedScan", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Delete)('guardar-cambios'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AiController.prototype, "deleteSavedScan", null);
 exports.AiController = AiController = __decorate([
     (0, common_1.Controller)('ai'),
     __metadata("design:paramtypes", [ai_service_1.AiService])

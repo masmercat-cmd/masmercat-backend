@@ -68,6 +68,30 @@ export class AiService {
       .trim();
   }
 
+  private normalizeStringArray(value: any): string[] {
+    const rawValues = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(/[\n,;|/]+/g)
+        : [];
+
+    return rawValues
+      .map((entry) => `${entry ?? ''}`.trim())
+      .filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+  }
+
+  private buildRouteOptions(
+    primaryValue: any,
+    explicitOptions: any,
+    postalCodes: any,
+  ): string[] {
+    return [
+      ...this.normalizeStringArray(primaryValue),
+      ...this.normalizeStringArray(explicitOptions),
+      ...this.normalizeStringArray(postalCodes),
+    ].filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+  }
+
   private buildImageHash(base64Image: string): string {
     return createHash('sha256').update(base64Image).digest('hex');
   }
@@ -497,9 +521,21 @@ export class AiService {
   }
 
   private finalizeVisionResult(parsed: any): any {
-    const envase = this.normalizeEnvase(parsed.envase);
+    let envase = this.normalizeEnvase(parsed.envase);
     const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
-    const boxes = this.estimateBoxes(parsed, envase);
+    const looseTerms = ['sin caja', 'suelto', 'suelta', 'loose', 'a granel'];
+    const looksLoose =
+      looseTerms.some((term) => envase.includes(term)) ||
+      (!envase.includes('caja') &&
+        !envase.includes('palet') &&
+        !envase.includes('palot'));
+
+    if (looksLoose) {
+      envase = 'sin caja';
+      parsed.envase = 'sin caja';
+    }
+
+    const boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
@@ -512,7 +548,19 @@ export class AiService {
     parsed.cajas_aprox = boxes;
 
     const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
-    if (boxes > 0 && piecesPerBox > 0) {
+    if (looksLoose) {
+      const visiblePieces = Math.max(
+        this.toNumber(parsed.cantidad_total_piezas),
+        this.toNumber(parsed.cantidad_aprox),
+        this.toNumber(parsed.piezas_visibles),
+        1,
+      );
+      parsed.cajas_estimadas = 0;
+      parsed.cajas_aprox = 0;
+      parsed.piezas_por_caja = 0;
+      parsed.cantidad_total_piezas = Math.round(visiblePieces);
+      parsed.cantidad_aprox = Math.round(visiblePieces);
+    } else if (boxes > 0 && piecesPerBox > 0) {
       const totalPieces = Math.round(boxes * piecesPerBox);
       parsed.cantidad_total_piezas = totalPieces;
       parsed.cantidad_aprox = totalPieces;
@@ -877,8 +925,7 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
         max_tokens: 500,
       });
 
-      
- completion.choices[0]?.message?.content || '';
+      return completion.choices[0]?.message?.content || '';
     } catch (error: any) {
       console.error('❌ OpenAI chat error:', error?.message || error);
       console.error('❌ details:', error?.response?.data || error?.response || error);
@@ -924,14 +971,18 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
     const lang = (language || 'es').substring(0, 2);
     const prompt = `Analyze this transport tariff image for fruit logistics.
 
-Return ONLY valid JSON with:
-{
-  "carrier": "",
-  "origin": "",
-  "destination": "",
-  "currency": "EUR",
-  "price_per_pallet": 0,
-  "industrial_multiplier": 1,
+	Return ONLY valid JSON with:
+	{
+	  "carrier": "",
+	  "origin": "",
+	  "destination": "",
+	  "origin_options": [],
+	  "destination_options": [],
+	  "origin_postal_codes": [],
+	  "destination_postal_codes": [],
+	  "currency": "EUR",
+	  "price_per_pallet": 0,
+	  "industrial_multiplier": 1,
   "fuel_increase_percent": 0,
   "vat_percent": 21,
   "notes": "",
@@ -940,12 +991,14 @@ Return ONLY valid JSON with:
 
 Rules:
 - Extract visible carrier, route, currency and pallet pricing.
-- Use these context values if helpful:
-  origin: ${origin || 'not provided'}
-  destination: ${destination || 'not provided'}
-  pallet_count: ${palletCount || 1}
-  pallet_type: ${palletType || 'not provided'}
-- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier.
+	- Use these context values if helpful:
+	  origin: ${origin || 'not provided'}
+	  destination: ${destination || 'not provided'}
+	  pallet_count: ${palletCount || 1}
+	  pallet_type: ${palletType || 'not provided'}
+	- If the tariff shows multiple origin or destination zones, return them in origin_options and destination_options.
+	- If postal codes or postal code ranges are visible, return them in origin_postal_codes and destination_postal_codes.
+	- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier.
 - If there is a surcharge increase in percent, return it in fuel_increase_percent.
 - Compute transport_cost using:
   price_per_pallet x pallet_count x industrial_multiplier x (1 + fuel_increase_percent/100)
@@ -998,10 +1051,27 @@ Rules:
       ).toFixed(2),
     );
 
+    const originOptions = this.buildRouteOptions(
+      parsed.origin,
+      parsed.origin_options,
+      parsed.origin_postal_codes,
+    );
+    const destinationOptions = this.buildRouteOptions(
+      parsed.destination,
+      parsed.destination_options,
+      parsed.destination_postal_codes,
+    );
+
     return {
       carrier: `${parsed.carrier ?? ''}`.trim(),
       origin: `${parsed.origin ?? origin ?? ''}`.trim(),
       destination: `${parsed.destination ?? destination ?? ''}`.trim(),
+      origin_options: originOptions,
+      destination_options: destinationOptions,
+      origin_postal_codes: this.normalizeStringArray(parsed.origin_postal_codes),
+      destination_postal_codes: this.normalizeStringArray(
+        parsed.destination_postal_codes,
+      ),
       currency: `${parsed.currency ?? 'EUR'}`.trim() || 'EUR',
       price_per_pallet: Number(basePrice.toFixed(2)),
       industrial_multiplier: Number(multiplier.toFixed(2)),
@@ -1068,11 +1138,18 @@ Identifica:
    - trufa
    - etc.
 
-3. Tipo de envase detectado:
-   - caja
-   - varias cajas
-   - palet con cajas
-   - palot
+	3. Tipo de envase detectado:
+	   - sin caja
+	   - caja
+	   - varias cajas
+	   - palet con cajas
+	   - palot
+
+	Si solo ves fruta suelta o una sola fruta sin caja, devuelve:
+	- "envase": "sin caja"
+	- "cajas_estimadas": 0
+	- "piezas_por_caja": 0
+	- "cantidad_total_piezas": el numero visible de frutas en la foto
 
 4. Material del envase o caja si se aprecia:
    - cartón
@@ -1152,7 +1229,7 @@ Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
 {
   "categoria": "fruta/verdura/hongo",
   "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",
-  "envase": "caja/varias cajas/palet con cajas/palot",
+	  "envase": "sin caja/caja/varias cajas/palet con cajas/palot",
   "material_caja": "carton/madera/plastico/desconocido",
   "columnas_visibles": 0,
   "filas_visibles": 0,
@@ -1191,7 +1268,7 @@ Identify:
 4. Estimate pieces per box
 5. Estimated total weight in kg
 6. Quality (extra, first, second)
-7. Packaging type (box, pallet with boxes, loose)
+	7. Packaging type (without box, box, pallet with boxes, loose)
 8. Box dimensions (e.g. "60x40 cm approx")
 9. Pallet dimensions if present (e.g. "120x100 cm approx")
 
@@ -1219,7 +1296,8 @@ IMPORTANT:
 - Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
 - If the pallet is full height and densely stacked, avoid low counts.
 - Prefer realistic commercial pallet counts for fruit boxes.
-- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
+	- If the image only shows loose fruit or a single fruit without packaging, return packaging as "without box", set cajas_estimadas to 0 and set cantidad_total_piezas to the visible fruit count.
+	- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
 - Do not count only the front-visible boxes.
 - For full pallets, prioritize total pallet structure over partial face visibility.
 `,
