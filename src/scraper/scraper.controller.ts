@@ -6,10 +6,19 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 export class ScraperController {
   constructor(private scraperService: ScraperService) {}
 
-   @Post('update-prices')
+  @Post('update-prices')
   async updatePrices() {
     await this.scraperService.updatePricesDaily();
     return { message: 'Price update completed' };
+  }
+
+  @Post('sync-reference-prices')
+  async syncReferencePrices() {
+    const result = await this.scraperService.syncReferencePrices();
+    return {
+      message: 'Reference prices synchronized',
+      ...result,
+    };
   }
 
  
