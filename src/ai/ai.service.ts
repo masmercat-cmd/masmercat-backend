@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
 import OpenAI from 'openai';
+import { PDFParse } from 'pdf-parse';
 import { Repository } from 'typeorm';
 import { AiScanResult, User } from '../entities';
 
@@ -90,6 +91,94 @@ export class AiService {
       ...this.normalizeStringArray(explicitOptions),
       ...this.normalizeStringArray(postalCodes),
     ].filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+  }
+
+  private async extractPdfText(document: string): Promise<string> {
+    const buffer = Buffer.from(document, 'base64');
+    const parser = new PDFParse({ data: new Uint8Array(buffer) });
+    try {
+      const parsed = await parser.getText();
+      return `${parsed.text ?? ''}`.trim();
+    } finally {
+      await parser.destroy();
+    }
+  }
+
+  private finalizeTransportTariffResult(
+    parsed: any,
+    raw: string,
+    origin: string,
+    destination: string,
+    palletCount: number,
+    palletType: string,
+    lang: string,
+  ): Record<string, any> {
+    const rawLower = raw.toLowerCase();
+    const parsedCarrier = `${parsed.carrier ?? parsed.transportista ?? parsed.company ?? ''}`.trim();
+    const parsedNotes = `${parsed.notes ?? ''}`.trim();
+    const combinedTariffText = `${parsedCarrier} ${parsedNotes} ${raw}`.toLowerCase();
+    const inferredCarrier =
+      parsedCarrier ||
+      (combinedTariffText.includes('castillo') || rawLower.includes('castillo')
+        ? 'Castillo'
+        : '');
+
+    const basePrice = this.toNumber(
+      parsed.price_per_pallet ?? parsed.transport_cost,
+    );
+    const pallets = Math.max(1, this.toNumber(palletCount));
+    const isIndustrial = `${palletType ?? ''}`.toLowerCase().includes('120x100') ||
+      `${palletType ?? ''}`.toLowerCase().includes('industrial');
+    const parsedIndustrialMultiplier = this.toNumber(parsed.industrial_multiplier);
+    const inferredIndustrialMultiplier =
+      inferredCarrier.toLowerCase().includes('castillo') &&
+      parsedIndustrialMultiplier <= 1
+        ? 1.27
+        : parsedIndustrialMultiplier;
+    const multiplier = isIndustrial
+      ? Math.max(1, inferredIndustrialMultiplier || 1)
+      : 1;
+    const fuelIncrease = this.toNumber(parsed.fuel_increase_percent);
+    const transportCost = Number(
+      (
+        basePrice *
+        pallets *
+        multiplier *
+        (1 + fuelIncrease / 100)
+      ).toFixed(2),
+    );
+
+    const originOptions = this.buildRouteOptions(
+      parsed.origin,
+      parsed.origin_options,
+      parsed.origin_postal_codes,
+    );
+    const destinationOptions = this.buildRouteOptions(
+      parsed.destination,
+      parsed.destination_options,
+      parsed.destination_postal_codes,
+    );
+
+    return {
+      carrier: inferredCarrier,
+      origin: `${parsed.origin ?? origin ?? ''}`.trim(),
+      destination: `${parsed.destination ?? destination ?? ''}`.trim(),
+      origin_options: originOptions,
+      destination_options: destinationOptions,
+      origin_postal_codes: this.normalizeStringArray(parsed.origin_postal_codes),
+      destination_postal_codes: this.normalizeStringArray(
+        parsed.destination_postal_codes,
+      ),
+      currency: `${parsed.currency ?? 'EUR'}`.trim() || 'EUR',
+      price_per_pallet: Number(basePrice.toFixed(2)),
+      industrial_multiplier: Number(multiplier.toFixed(2)),
+      fuel_increase_percent: Number(fuelIncrease.toFixed(2)),
+      vat_percent: Number((this.toNumber(parsed.vat_percent) || 21).toFixed(2)),
+      notes: `${parsed.notes ?? ''}`.trim(),
+      pallet_count: pallets,
+      transport_cost: transportCost,
+      parsed_language: lang,
+    };
   }
 
   private buildImageHash(base64Image: string): string {
@@ -962,18 +1051,12 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
       throw new Error('Falta document');
     }
 
-    if (!mimeType.startsWith('image/')) {
-      throw new Error(
-        'Por ahora la tarifa debe subirse como imagen. El soporte PDF vendra despues.',
-      );
-    }
-
     const lang = (language || 'es').substring(0, 2);
-    const prompt = `Analyze this transport tariff image for fruit logistics.
+    const prompt = `Analyze this transport tariff for fruit logistics.
 
-	Return ONLY valid JSON with:
-	{
-	  "carrier": "",
+		Return ONLY valid JSON with:
+		{
+		  "carrier": "",
 	  "origin": "",
 	  "destination": "",
 	  "origin_options": [],
@@ -1005,85 +1088,73 @@ Rules:
 	- Compute transport_cost using:
 	  price_per_pallet x pallet_count x industrial_multiplier x (1 + fuel_increase_percent/100)
 	- If the pallet is not industrial, use multiplier 1.
-- If VAT is not visible, default to 21.
-- Be conservative and choose the clearest visible price.
-`;
+	- If VAT is not visible, default to 21.
+	- Be conservative and choose the clearest visible price.
+	`;
 
-    const completion = await this.openai.chat.completions.create({
-      model: 'gpt-4o',
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${document}`,
+    let raw = '{}';
+    let parsed: any = {};
+
+    if (mimeType === 'application/pdf') {
+      const pdfText = await this.extractPdfText(document);
+      if (!pdfText) {
+        throw new Error('No se pudo leer texto del PDF de tarifa');
+      }
+
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: `Tariff PDF extracted text:\n\n${pdfText.slice(0, 12000)}\n\n${prompt}`,
+          },
+        ],
+        max_tokens: 500,
+        temperature: 0,
+      });
+
+      raw = completion.choices[0]?.message?.content || '{}';
+      parsed = JSON.parse(raw);
+      this.logVisionSnapshot('OpenAI transport tariff PDF JSON', parsed);
+    } else if (mimeType.startsWith('image/')) {
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${document}`,
+                },
               },
-            },
-          ],
-        },
-      ],
-      max_tokens: 350,
-      temperature: 0,
-    });
+            ],
+          },
+        ],
+        max_tokens: 350,
+        temperature: 0,
+      });
 
-    const raw = completion.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(raw);
-    this.logVisionSnapshot('OpenAI transport tariff JSON', parsed);
+      raw = completion.choices[0]?.message?.content || '{}';
+      parsed = JSON.parse(raw);
+      this.logVisionSnapshot('OpenAI transport tariff JSON', parsed);
+    } else {
+      throw new Error('Formato de tarifa no compatible');
+    }
 
-    const basePrice = this.toNumber(
-      parsed.price_per_pallet ?? parsed.transport_cost,
+    return this.finalizeTransportTariffResult(
+      parsed,
+      raw,
+      origin,
+      destination,
+      palletCount,
+      palletType,
+      lang,
     );
-    const pallets = Math.max(1, this.toNumber(palletCount));
-    const isIndustrial = `${palletType ?? ''}`.toLowerCase().includes('120x100') ||
-      `${palletType ?? ''}`.toLowerCase().includes('industrial');
-    const multiplier = isIndustrial
-      ? Math.max(1, this.toNumber(parsed.industrial_multiplier) || 1)
-      : 1;
-    const fuelIncrease = this.toNumber(parsed.fuel_increase_percent);
-    const transportCost = Number(
-      (
-        basePrice *
-        pallets *
-        multiplier *
-        (1 + fuelIncrease / 100)
-      ).toFixed(2),
-    );
-
-    const originOptions = this.buildRouteOptions(
-      parsed.origin,
-      parsed.origin_options,
-      parsed.origin_postal_codes,
-    );
-    const destinationOptions = this.buildRouteOptions(
-      parsed.destination,
-      parsed.destination_options,
-      parsed.destination_postal_codes,
-    );
-
-    return {
-      carrier: `${parsed.carrier ?? ''}`.trim(),
-      origin: `${parsed.origin ?? origin ?? ''}`.trim(),
-      destination: `${parsed.destination ?? destination ?? ''}`.trim(),
-      origin_options: originOptions,
-      destination_options: destinationOptions,
-      origin_postal_codes: this.normalizeStringArray(parsed.origin_postal_codes),
-      destination_postal_codes: this.normalizeStringArray(
-        parsed.destination_postal_codes,
-      ),
-      currency: `${parsed.currency ?? 'EUR'}`.trim() || 'EUR',
-      price_per_pallet: Number(basePrice.toFixed(2)),
-      industrial_multiplier: Number(multiplier.toFixed(2)),
-      fuel_increase_percent: Number(fuelIncrease.toFixed(2)),
-      vat_percent: Number((this.toNumber(parsed.vat_percent) || 21).toFixed(2)),
-      notes: `${parsed.notes ?? ''}`.trim(),
-      pallet_count: pallets,
-      transport_cost: transportCost,
-      parsed_language: lang,
-    };
   }
 
   async analyzeFruitImage(

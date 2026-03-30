@@ -27,6 +27,8 @@ export declare class AiService {
     private normalizeMeasure;
     private normalizeStringArray;
     private buildRouteOptions;
+    private extractPdfText;
+    private finalizeTransportTariffResult;
     private buildImageHash;
     private mapSavedScanResult;
     private extractPatternSource;
