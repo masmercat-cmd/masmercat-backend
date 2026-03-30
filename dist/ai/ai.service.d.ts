@@ -27,6 +27,8 @@ export declare class AiService {
     private normalizeMeasure;
     private normalizeStringArray;
     private buildRouteOptions;
+    private normalizePriceTiers;
+    private resolvePricePerPallet;
     private extractPdfText;
     private finalizeTransportTariffResult;
     private buildImageHash;

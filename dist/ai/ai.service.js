@@ -83,6 +83,44 @@ let AiService = class AiService {
             ...this.normalizeStringArray(postalCodes),
         ].filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
     }
+    normalizePriceTiers(value) {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+        return value
+            .map((entry) => {
+            if (!entry || typeof entry !== 'object') {
+                return null;
+            }
+            const min = Math.max(1, Math.round(this.toNumber(entry.min_palets ?? entry.min ?? 0)));
+            const maxRaw = this.toNumber(entry.max_palets ?? entry.max ?? 0);
+            const max = maxRaw > 0 ? Math.round(maxRaw) : null;
+            const price = this.toNumber(entry.price_per_pallet ?? entry.price ?? 0);
+            const label = `${entry.label ?? ''}`.trim();
+            if (price <= 0) {
+                return null;
+            }
+            return {
+                min_palets: min,
+                max_palets: max,
+                price_per_pallet: Number(price.toFixed(2)),
+                label,
+            };
+        })
+            .filter((entry) => !!entry);
+    }
+    resolvePricePerPallet(parsed, palletCount) {
+        const tiers = this.normalizePriceTiers(parsed.price_tiers);
+        const pallets = Math.max(1, this.toNumber(palletCount));
+        for (const tier of tiers) {
+            const min = this.toNumber(tier.min_palets);
+            const max = tier.max_palets == null ? Number.POSITIVE_INFINITY : this.toNumber(tier.max_palets);
+            if (pallets >= min && pallets <= max) {
+                return this.toNumber(tier.price_per_pallet);
+            }
+        }
+        return this.toNumber(parsed.price_per_pallet ?? parsed.transport_cost);
+    }
     async extractPdfText(document) {
         const buffer = Buffer.from(document, 'base64');
         const parser = new pdf_parse_1.PDFParse({ data: new Uint8Array(buffer) });
@@ -103,7 +141,8 @@ let AiService = class AiService {
             (combinedTariffText.includes('castillo') || rawLower.includes('castillo')
                 ? 'Castillo'
                 : '');
-        const basePrice = this.toNumber(parsed.price_per_pallet ?? parsed.transport_cost);
+        const priceTiers = this.normalizePriceTiers(parsed.price_tiers);
+        const basePrice = this.resolvePricePerPallet(parsed, palletCount);
         const pallets = Math.max(1, this.toNumber(palletCount));
         const isIndustrial = `${palletType ?? ''}`.toLowerCase().includes('120x100') ||
             `${palletType ?? ''}`.toLowerCase().includes('industrial');
@@ -132,6 +171,7 @@ let AiService = class AiService {
             destination_postal_codes: this.normalizeStringArray(parsed.destination_postal_codes),
             currency: `${parsed.currency ?? 'EUR'}`.trim() || 'EUR',
             price_per_pallet: Number(basePrice.toFixed(2)),
+            price_tiers: priceTiers,
             industrial_multiplier: Number(multiplier.toFixed(2)),
             fuel_increase_percent: Number(fuelIncrease.toFixed(2)),
             vat_percent: Number((this.toNumber(parsed.vat_percent) || 21).toFixed(2)),
@@ -821,18 +861,21 @@ Responda de maneira amigável, concisa e profissional em português.`,
 		Return ONLY valid JSON with:
 		{
 		  "carrier": "",
-	  "origin": "",
-	  "destination": "",
-	  "origin_options": [],
-	  "destination_options": [],
-	  "origin_postal_codes": [],
-	  "destination_postal_codes": [],
-	  "currency": "EUR",
-	  "price_per_pallet": 0,
-	  "industrial_multiplier": 1,
-  "fuel_increase_percent": 0,
-  "vat_percent": 21,
-  "notes": "",
+		  "origin": "",
+		  "destination": "",
+		  "origin_options": [],
+		  "destination_options": [],
+		  "origin_postal_codes": [],
+		  "destination_postal_codes": [],
+		  "currency": "EUR",
+		  "price_per_pallet": 0,
+		  "price_tiers": [
+		    { "min_palets": 1, "max_palets": 3, "price_per_pallet": 248, "label": "1-3" }
+		  ],
+		  "industrial_multiplier": 1,
+	  "fuel_increase_percent": 0,
+	  "vat_percent": 21,
+	  "notes": "",
   "transport_cost": 0
 }
 
@@ -847,6 +890,9 @@ Rules:
 		  pallet_type: ${palletType || 'not provided'}
 		- If the tariff shows multiple origin or destination zones, return them in origin_options and destination_options.
 		- If postal codes or postal code ranges are visible, return them in origin_postal_codes and destination_postal_codes.
+		- If the tariff shows price brackets by number of pallets (for example 1-3, 5-9, 10-19, 20-27), return them in price_tiers.
+		- For each tier, use min_palets, max_palets, price_per_pallet, and label.
+		- Set price_per_pallet to the tier that matches the current pallet_count when tiers exist.
 		- If the tariff mentions a multiplier for industrial pallet, return it in industrial_multiplier as a decimal number, for example 1.27.
 	- If there is a surcharge increase in percent, return it in fuel_increase_percent.
 	- Compute transport_cost using:
