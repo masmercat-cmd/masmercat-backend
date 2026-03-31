@@ -46,6 +46,27 @@ interface UsdaApiRow {
   store_type?: string;
 }
 
+interface SeedFruitInput {
+  nameEs: string;
+  nameEn: string;
+  nameFr: string;
+  nameDe: string;
+  namePt: string;
+  nameAr: string;
+  nameZh: string;
+  nameHi: string;
+  scientificName?: string;
+}
+
+interface SeedMarketInput {
+  name: string;
+  country: string;
+  city: string;
+  continent: string;
+  latitude: number;
+  longitude: number;
+}
+
 @Injectable()
 export class ScraperService {
   private readonly logger = new Logger(ScraperService.name);
@@ -102,6 +123,118 @@ export class ScraperService {
     'estados unidos': 'US',
     'united states': 'US',
   };
+  private static readonly defaultSeedFruits: SeedFruitInput[] = [
+    {
+      nameEs: 'Naranjas',
+      nameEn: 'Oranges',
+      nameFr: 'Oranges',
+      nameDe: 'Orangen',
+      namePt: 'Laranjas',
+      nameAr: 'برتقال',
+      nameZh: '橙子',
+      nameHi: 'संतरा',
+      scientificName: 'Citrus sinensis',
+    },
+    {
+      nameEs: 'Limones',
+      nameEn: 'Lemons',
+      nameFr: 'Citrons',
+      nameDe: 'Zitronen',
+      namePt: 'Limoes',
+      nameAr: 'ليمون',
+      nameZh: '柠檬',
+      nameHi: 'नींबू',
+      scientificName: 'Citrus limon',
+    },
+    {
+      nameEs: 'Manzanas',
+      nameEn: 'Apples',
+      nameFr: 'Pommes',
+      nameDe: 'Aepfel',
+      namePt: 'Macas',
+      nameAr: 'تفاح',
+      nameZh: '苹果',
+      nameHi: 'सेब',
+      scientificName: 'Malus domestica',
+    },
+    {
+      nameEs: 'Peras',
+      nameEn: 'Pears',
+      nameFr: 'Poires',
+      nameDe: 'Birnen',
+      namePt: 'Peras',
+      nameAr: 'كمثرى',
+      nameZh: '梨',
+      nameHi: 'नाशपाती',
+      scientificName: 'Pyrus communis',
+    },
+    {
+      nameEs: 'Fresas',
+      nameEn: 'Strawberries',
+      nameFr: 'Fraises',
+      nameDe: 'Erdbeeren',
+      namePt: 'Morangos',
+      nameAr: 'فراولة',
+      nameZh: '草莓',
+      nameHi: 'स्ट्रॉबेरी',
+      scientificName: 'Fragaria × ananassa',
+    },
+    {
+      nameEs: 'Tomates',
+      nameEn: 'Tomatoes',
+      nameFr: 'Tomates',
+      nameDe: 'Tomaten',
+      namePt: 'Tomates',
+      nameAr: 'طماطم',
+      nameZh: '番茄',
+      nameHi: 'टमाटर',
+      scientificName: 'Solanum lycopersicum',
+    },
+    {
+      nameEs: 'Pepinos',
+      nameEn: 'Cucumbers',
+      nameFr: 'Concombres',
+      nameDe: 'Gurken',
+      namePt: 'Pepinos',
+      nameAr: 'خيار',
+      nameZh: '黄瓜',
+      nameHi: 'खीरा',
+      scientificName: 'Cucumis sativus',
+    },
+    {
+      nameEs: 'Patatas',
+      nameEn: 'Potatoes',
+      nameFr: 'Pommes de terre',
+      nameDe: 'Kartoffeln',
+      namePt: 'Batatas',
+      nameAr: 'بطاطس',
+      nameZh: '土豆',
+      nameHi: 'आलू',
+      scientificName: 'Solanum tuberosum',
+    },
+    {
+      nameEs: 'Aguacates',
+      nameEn: 'Avocados',
+      nameFr: 'Avocats',
+      nameDe: 'Avocados',
+      namePt: 'Abacates',
+      nameAr: 'أفوكادو',
+      nameZh: '牛油果',
+      nameHi: 'एवोकाडो',
+      scientificName: 'Persea americana',
+    },
+  ];
+  private static readonly defaultSeedMarkets: SeedMarketInput[] = [
+    { name: 'Mercamadrid', country: 'Spain', city: 'Madrid', continent: 'Europe', latitude: 40.3842, longitude: -3.6217 },
+    { name: 'Mercabarna', country: 'Spain', city: 'Barcelona', continent: 'Europe', latitude: 41.3273, longitude: 2.1289 },
+    { name: 'Rungis International Market', country: 'France', city: 'Paris', continent: 'Europe', latitude: 48.7472, longitude: 2.3524 },
+    { name: 'Centro Agroalimentare Roma', country: 'Italy', city: 'Rome', continent: 'Europe', latitude: 41.7963, longitude: 12.5362 },
+    { name: 'Hamburg Wholesale Market', country: 'Germany', city: 'Hamburg', continent: 'Europe', latitude: 53.5426, longitude: 10.0244 },
+    { name: 'MARL Lisbon', country: 'Portugal', city: 'Lisbon', continent: 'Europe', latitude: 38.7813, longitude: -9.1022 },
+    { name: 'Hunts Point Market', country: 'United States', city: 'New York', continent: 'North America', latitude: 40.8075, longitude: -73.8801 },
+    { name: 'Los Angeles Wholesale Produce Market', country: 'United States', city: 'Los Angeles', continent: 'North America', latitude: 34.0312, longitude: -118.2304 },
+    { name: 'Chicago International Produce Market', country: 'United States', city: 'Chicago', continent: 'North America', latitude: 41.8466, longitude: -87.6847 },
+  ];
 
   constructor(
     @InjectRepository(Fruit)
@@ -123,16 +256,49 @@ export class ScraperService {
   }
 
   async syncReferencePrices(): Promise<{ saved: number }> {
-    const [fruits, markets] = await Promise.all([
-      this.fruitRepository.find({ where: { active: true } }),
-      this.marketRepository.find({ where: { active: true } }),
-    ]);
+    const seeded = await this.ensureReferenceCatalog();
+    const fruits = seeded.fruits;
+    const markets = seeded.markets;
 
     const euSaved = await this.syncEuReferencePrices(fruits, markets);
     const usdaSaved = await this.syncUsdaReferencePrices(fruits, markets);
     const saved = euSaved + usdaSaved;
     this.logger.log(`Reference prices synchronized: ${saved}`);
     return { saved };
+  }
+
+  private async ensureReferenceCatalog(): Promise<{
+    fruits: Fruit[];
+    markets: Market[];
+  }> {
+    let fruits = await this.fruitRepository.find({ where: { active: true } });
+    let markets = await this.marketRepository.find({ where: { active: true } });
+
+    if (fruits.length === 0) {
+      this.logger.log('No active fruits found. Seeding default fruit catalog...');
+      for (const seed of ScraperService.defaultSeedFruits) {
+        const fruit = this.fruitRepository.create({
+          ...seed,
+          active: true,
+        });
+        await this.fruitRepository.save(fruit);
+      }
+      fruits = await this.fruitRepository.find({ where: { active: true } });
+    }
+
+    if (markets.length === 0) {
+      this.logger.log('No active markets found. Seeding default market catalog...');
+      for (const seed of ScraperService.defaultSeedMarkets) {
+        const market = this.marketRepository.create({
+          ...seed,
+          active: true,
+        });
+        await this.marketRepository.save(market);
+      }
+      markets = await this.marketRepository.find({ where: { active: true } });
+    }
+
+    return { fruits, markets };
   }
 
   async scrapeMAPAPrices(): Promise<any> {
