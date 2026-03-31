@@ -731,8 +731,7 @@ export class ScraperService {
             Authorization: `Basic ${auth}`,
           },
           params: {
-            q: `commodity=${commodity}`,
-            allSections: true,
+            lastReports: 1,
           },
         },
       );
@@ -904,8 +903,7 @@ export class ScraperService {
             Authorization: `Basic ${auth}`,
           },
           params: {
-            q: `commodity=${commodity}`,
-            allSections: true,
+            lastReports: 1,
           },
         },
       );
@@ -918,8 +916,7 @@ export class ScraperService {
         query: {
           commodity,
           reportId: 3324,
-          q: `commodity=${commodity}`,
-          allSections: true,
+          lastReports: 1,
         },
         rowCount: rows.length,
         sample: rows.slice(0, 3),
@@ -934,8 +931,7 @@ export class ScraperService {
         query: {
           commodity,
           reportId: 3324,
-          q: `commodity=${commodity}`,
-          allSections: true,
+          lastReports: 1,
         },
         rowCount: 0,
         sample: payload != null ? [payload] : [],
@@ -983,10 +979,22 @@ export class ScraperService {
 
   private extractUsdaRows(payload: any): UsdaApiRow[] {
     if (Array.isArray(payload)) {
-      return payload;
+      const nested = payload.flatMap((item) => this.extractUsdaRows(item));
+      return nested.length > 0 ? nested : payload;
     }
 
     if (payload && typeof payload === 'object') {
+      const looksLikeLeafRow =
+        'commodity' in payload ||
+        'item_name' in payload ||
+        'item_description' in payload ||
+        'variety' in payload ||
+        'weighted_average' in payload ||
+        'average_price' in payload;
+      if (looksLikeLeafRow) {
+        return [payload as UsdaApiRow];
+      }
+
       const candidates = [
         payload.results,
         payload.Results,
@@ -994,11 +1002,13 @@ export class ScraperService {
         payload.Data,
         payload.report,
         payload.rows,
+        payload.details,
       ];
 
       for (const candidate of candidates) {
-        if (Array.isArray(candidate)) {
-          return candidate;
+        const extracted = this.extractUsdaRows(candidate);
+        if (extracted.length > 0) {
+          return extracted;
         }
       }
     }
