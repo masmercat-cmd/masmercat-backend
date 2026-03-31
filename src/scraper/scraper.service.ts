@@ -33,17 +33,25 @@ interface UsdaApiRow {
   commodity?: string;
   item_name?: string;
   variety?: string;
+  item_description?: string;
   published_date?: string;
   report_date?: string;
   report_begin_date?: string;
+  report_end_date?: string;
   weighted_average?: string | number;
+  weighted_avg?: string | number;
+  weightedaverage?: string | number;
   average_price?: string | number;
+  average?: string | number;
   mostly_price?: string | number;
   price?: string | number;
+  mostly_low?: string | number;
+  mostly_high?: string | number;
   unit?: string;
   package?: string;
   region?: string;
   store_type?: string;
+  organic?: string;
 }
 
 interface SeedFruitInput {
@@ -118,6 +126,20 @@ export class ScraperService {
     portugal: 'PT',
     netherlands: 'NL',
     'paises bajos': 'NL',
+    argentina: 'AR',
+    brazil: 'BR',
+    brasil: 'BR',
+    chile: 'CL',
+    paraguay: 'PY',
+    uruguay: 'UY',
+    australia: 'AU',
+    'new zealand': 'NZ',
+    china: 'CN',
+    japan: 'JP',
+    india: 'IN',
+    singapore: 'SG',
+    thailand: 'TH',
+    vietnam: 'VN',
     usa: 'US',
     eeuu: 'US',
     'estados unidos': 'US',
@@ -234,6 +256,20 @@ export class ScraperService {
     { name: 'Hunts Point Market', country: 'United States', city: 'New York', continent: 'North America', latitude: 40.8075, longitude: -73.8801 },
     { name: 'Los Angeles Wholesale Produce Market', country: 'United States', city: 'Los Angeles', continent: 'North America', latitude: 34.0312, longitude: -118.2304 },
     { name: 'Chicago International Produce Market', country: 'United States', city: 'Chicago', continent: 'North America', latitude: 41.8466, longitude: -87.6847 },
+    { name: 'Mercado Central de Buenos Aires', country: 'Argentina', city: 'Buenos Aires', continent: 'South America', latitude: -34.8086, longitude: -58.4801 },
+    { name: 'CEAGESP', country: 'Brazil', city: 'Sao Paulo', continent: 'South America', latitude: -23.5358, longitude: -46.7219 },
+    { name: 'Lo Valledor', country: 'Chile', city: 'Santiago', continent: 'South America', latitude: -33.4977, longitude: -70.6807 },
+    { name: 'Abasto Norte', country: 'Paraguay', city: 'Asuncion', continent: 'South America', latitude: -25.2637, longitude: -57.5759 },
+    { name: 'Unidad Agroalimentaria Metropolitana', country: 'Uruguay', city: 'Montevideo', continent: 'South America', latitude: -34.8158, longitude: -56.0686 },
+    { name: 'Sydney Markets', country: 'Australia', city: 'Sydney', continent: 'Oceania', latitude: -33.8856, longitude: 150.8931 },
+    { name: 'Melbourne Market', country: 'Australia', city: 'Melbourne', continent: 'Oceania', latitude: -37.7995, longitude: 144.9396 },
+    { name: 'Auckland Produce Market', country: 'New Zealand', city: 'Auckland', continent: 'Oceania', latitude: -36.8885, longitude: 174.8166 },
+    { name: 'Jiangnan Wholesale Market', country: 'China', city: 'Guangzhou', continent: 'Asia', latitude: 23.0938, longitude: 113.2506 },
+    { name: 'Ota Market', country: 'Japan', city: 'Tokyo', continent: 'Asia', latitude: 35.5850, longitude: 139.7424 },
+    { name: 'Azadpur Mandi', country: 'India', city: 'Delhi', continent: 'Asia', latitude: 28.7183, longitude: 77.1697 },
+    { name: 'Pasir Panjang Wholesale Centre', country: 'Singapore', city: 'Singapore', continent: 'Asia', latitude: 1.2899, longitude: 103.7696 },
+    { name: 'Talaad Thai', country: 'Thailand', city: 'Bangkok', continent: 'Asia', latitude: 14.0819, longitude: 100.6304 },
+    { name: 'Thu Duc Wholesale Market', country: 'Vietnam', city: 'Ho Chi Minh City', continent: 'Asia', latitude: 10.8515, longitude: 106.7656 },
   ];
 
   constructor(
@@ -503,23 +539,48 @@ export class ScraperService {
     referenceDate: Date;
   } | null> {
     try {
-      const response = await axios.get<EuApiRow[]>(
-        'https://agridata.ec.europa.eu/api/fruitAndVegetable/pricesSupplyChain',
-        {
-          timeout: 15000,
-          params: {
-            years: `${currentYear - 1},${currentYear}`,
-            products: product,
-            memberStateCodes: memberStateCode,
-            productStages: 'Retail buying price',
-          },
-        },
+      const productVariants = Array.from(
+        new Set([product, product.toLowerCase(), product.toUpperCase()]),
       );
+      let rows: EuApiRow[] = [];
 
-      const rows = Array.isArray(response.data) ? response.data : [];
+      for (const productVariant of productVariants) {
+        try {
+          const response = await axios.get<EuApiRow[]>(
+            'https://agridata.ec.europa.eu/api/fruitAndVegetable/pricesSupplyChain',
+            {
+              timeout: 15000,
+              params: {
+                years: `${currentYear - 1},${currentYear}`,
+                products: productVariant,
+                memberStateCodes: memberStateCode,
+                productStages: 'Retail buying price',
+              },
+            },
+          );
+
+          rows = Array.isArray(response.data) ? response.data : [];
+          if (rows.length > 0) {
+            break;
+          }
+        } catch (variantError) {
+          const status = axios.isAxiosError(variantError)
+            ? variantError.response?.status
+            : undefined;
+          this.logger.warn(
+            `EU reference fetch variant failed for ${productVariant}/${memberStateCode}: ${status ?? 'no-status'} ${variantError.message}`,
+          );
+        }
+      }
+
+      if (rows.length === 0) {
+        this.logger.log(`EU reference returned 0 rows for ${product}/${memberStateCode}`);
+        return null;
+      }
+
       const parsed = rows
         .map((row) => ({
-          price: Number.parseFloat(`${row.price ?? 0}`),
+          price: this.parseNumericPrice(row.price),
           unitRaw: `${row.unit ?? 'EUR/kg'}`,
           productStage: `${row.productStage ?? 'Retail buying price'}`,
           referenceDate: this.parseEuDate(`${row.beginDate ?? ''}`),
@@ -530,7 +591,10 @@ export class ScraperService {
             (b.referenceDate?.getTime() ?? 0) - (a.referenceDate?.getTime() ?? 0),
         );
 
-      if (parsed.length === 0) return null;
+      if (parsed.length === 0) {
+        this.logger.log(`EU reference rows had no usable prices for ${product}/${memberStateCode}`);
+        return null;
+      }
 
       const latest = parsed[0];
       const { currency, unitType } = this.normalizeUnit(latest.unitRaw);
@@ -542,8 +606,9 @@ export class ScraperService {
         referenceDate: latest.referenceDate!,
       };
     } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
       this.logger.warn(
-        `EU reference fetch failed for ${product}/${memberStateCode}: ${error.message}`,
+        `EU reference fetch failed for ${product}/${memberStateCode}: ${status ?? 'no-status'} ${error.message}`,
       );
       return null;
     }
@@ -560,8 +625,8 @@ export class ScraperService {
   } | null> {
     try {
       const auth = Buffer.from(`${apiKey}:`).toString('base64');
-      const response = await axios.get<{ results?: UsdaApiRow[] }>(
-        'https://marsapi.ams.usda.gov/services/v1.2/reports/3324/Details',
+      const response = await axios.get<any>(
+        'https://marsapi.ams.usda.gov/services/v1.2/reports/3324/report%20details',
         {
           timeout: 15000,
           headers: {
@@ -573,51 +638,72 @@ export class ScraperService {
         },
       );
 
-      const rows = Array.isArray(response.data?.results) ? response.data.results : [];
+      const rows = this.extractUsdaRows(response.data);
+      if (rows.length === 0) {
+        const keys =
+          response.data != null && typeof response.data === 'object'
+            ? Object.keys(response.data).slice(0, 10).join(', ')
+            : typeof response.data;
+        this.logger.log(`USDA report 3324 returned 0 rows for ${commodity}. Keys: ${keys}`);
+        return null;
+      }
+
       const parsed = rows
-          .map((row) => {
-            const rawPrice =
-              row.weighted_average ??
-              row.average_price ??
-              row.mostly_price ??
-              row.price;
-            const searchableText = [
+        .map((row) => {
+          const rawPrice =
+            row.weighted_average ??
+            row.weighted_avg ??
+            row.weightedaverage ??
+            row.average_price ??
+            row.average ??
+            row.mostly_price ??
+            row.price ??
+            row.mostly_high ??
+            row.mostly_low;
+          const searchableText = this.normalizeText(
+            [
               row.commodity,
               row.item_name,
+              row.item_description,
               row.variety,
             ]
               .filter(Boolean)
-              .join(' ')
-              .toLowerCase();
-            const price = Number.parseFloat(
-              `${rawPrice ?? 0}`.replace(/[^0-9.\-]/g, ''),
-            );
-            const dateValue =
-              row.published_date ?? row.report_date ?? row.report_begin_date ?? '';
-
-            return {
-              commodity: searchableText,
-              price,
-              unitRaw: `${row.unit ?? row.package ?? 'USD/unit'}`,
-              productStage: row.store_type
-                ? `Retail ${row.store_type}`
-                : 'Retail advertised price',
-              referenceDate: this.parseUsdaDate(dateValue),
-            };
-          })
-          .filter(
-            (row) =>
-              row.commodity.includes(commodity.toLowerCase()) &&
-              !Number.isNaN(row.price) &&
-              row.price > 0 &&
-              row.referenceDate != null,
-          )
-          .sort(
-            (a, b) =>
-              (b.referenceDate?.getTime() ?? 0) - (a.referenceDate?.getTime() ?? 0),
+              .join(' '),
           );
+          const price = this.parseNumericPrice(rawPrice);
+          const dateValue =
+            row.published_date ??
+            row.report_date ??
+            row.report_end_date ??
+            row.report_begin_date ??
+            '';
 
-      if (parsed.length === 0) return null;
+          return {
+            commodity: searchableText,
+            price,
+            unitRaw: `${row.unit ?? row.package ?? 'USD/unit'}`,
+            productStage: row.store_type
+              ? `Retail ${row.store_type}`
+              : 'Retail advertised price',
+            referenceDate: this.parseUsdaDate(dateValue),
+          };
+        })
+        .filter(
+          (row) =>
+            this.matchesCommodity(row.commodity, commodity) &&
+            !Number.isNaN(row.price) &&
+            row.price > 0 &&
+            row.referenceDate != null,
+        )
+        .sort(
+          (a, b) =>
+            (b.referenceDate?.getTime() ?? 0) - (a.referenceDate?.getTime() ?? 0),
+        );
+
+      if (parsed.length === 0) {
+        this.logger.log(`USDA report 3324 returned rows but no commodity match for ${commodity}`);
+        return null;
+      }
 
       const latest = parsed[0];
       return {
@@ -627,7 +713,10 @@ export class ScraperService {
         referenceDate: latest.referenceDate!,
       };
     } catch (error) {
-      this.logger.warn(`USDA reference fetch failed for ${commodity}: ${error.message}`);
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      this.logger.warn(
+        `USDA reference fetch failed for ${commodity}: ${status ?? 'no-status'} ${error.message}`,
+      );
       return null;
     }
   }
@@ -667,6 +756,67 @@ export class ScraperService {
       }
     }
     return null;
+  }
+
+  private extractUsdaRows(payload: any): UsdaApiRow[] {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    if (payload && typeof payload === 'object') {
+      const candidates = [
+        payload.results,
+        payload.Results,
+        payload.data,
+        payload.Data,
+        payload.report,
+        payload.rows,
+      ];
+
+      for (const candidate of candidates) {
+        if (Array.isArray(candidate)) {
+          return candidate;
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private parseNumericPrice(value: string | number | null | undefined): number {
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    const normalized = `${value ?? ''}`.replace(/[^0-9,.\-]/g, '').trim();
+    if (!normalized) {
+      return Number.NaN;
+    }
+
+    const hasComma = normalized.includes(',');
+    const hasDot = normalized.includes('.');
+    let candidate = normalized;
+
+    if (hasComma && hasDot) {
+      candidate = normalized.replace(/\./g, '').replace(',', '.');
+    } else if (hasComma) {
+      candidate = normalized.replace(',', '.');
+    }
+
+    return Number.parseFloat(candidate);
+  }
+
+  private matchesCommodity(searchableText: string, commodity: string): boolean {
+    const normalizedCommodity = this.normalizeText(commodity);
+    const variants = Array.from(
+      new Set([
+        normalizedCommodity,
+        normalizedCommodity.replace(/es$/, ''),
+        normalizedCommodity.replace(/s$/, ''),
+      ]),
+    ).filter((value) => value.length >= 3);
+
+    return variants.some((variant) => searchableText.includes(variant));
   }
 
   private resolveUsdaCommodityName(nameEs: string): string | null {
