@@ -30,6 +30,16 @@ export interface ProviderDiagnostics {
   notes: string[];
 }
 
+export interface ProviderDebugResult {
+  provider: string;
+  ok: boolean;
+  status?: number;
+  query: Record<string, any>;
+  rowCount: number;
+  sample: any[];
+  message?: string;
+}
+
 interface EuApiRow {
   memberStateCode?: string;
   beginDate?: string;
@@ -318,6 +328,25 @@ export class ScraperService {
       saved,
       diagnostics: [euResult.diagnostics, usdaResult.diagnostics],
     };
+  }
+
+  async debugReferenceSources(options?: {
+    euProduct?: string;
+    euCountry?: string;
+    usdaCommodity?: string;
+  }): Promise<{
+    eu: ProviderDebugResult;
+    usda: ProviderDebugResult;
+  }> {
+    const now = new Date().getUTCFullYear();
+    const euProduct = options?.euProduct?.trim() || 'apples';
+    const euCountry = options?.euCountry?.trim() || 'ES';
+    const usdaCommodity = options?.usdaCommodity?.trim() || 'Apples';
+
+    const eu = await this.debugEuReferenceSource(euProduct, euCountry, now);
+    const usda = await this.debugUsdaReferenceSource(usdaCommodity);
+
+    return { eu, usda };
   }
 
   private async ensureReferenceCatalog(): Promise<{
@@ -794,6 +823,124 @@ export class ScraperService {
         `USDA reference fetch failed for ${commodity}: ${status ?? 'no-status'} ${error.message}`,
       );
       return null;
+    }
+  }
+
+  private async debugEuReferenceSource(
+    product: string,
+    memberStateCode: string,
+    currentYear: number,
+  ): Promise<ProviderDebugResult> {
+    try {
+      const response = await axios.get<any>(
+        'https://agridata.ec.europa.eu/api/fruitAndVegetable/pricesSupplyChain',
+        {
+          timeout: 15000,
+          params: {
+            years: `${currentYear - 1},${currentYear}`,
+            products: product,
+            memberStateCodes: memberStateCode,
+            productStages: 'Retail buying price',
+          },
+        },
+      );
+
+      const rows = Array.isArray(response.data) ? response.data : [];
+      return {
+        provider: 'EU AgriData',
+        ok: true,
+        status: response.status,
+        query: {
+          product,
+          memberStateCode,
+          years: `${currentYear - 1},${currentYear}`,
+          productStage: 'Retail buying price',
+        },
+        rowCount: rows.length,
+        sample: rows.slice(0, 3),
+      };
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const payload = axios.isAxiosError(error) ? error.response?.data : undefined;
+      return {
+        provider: 'EU AgriData',
+        ok: false,
+        status,
+        query: {
+          product,
+          memberStateCode,
+          years: `${currentYear - 1},${currentYear}`,
+          productStage: 'Retail buying price',
+        },
+        rowCount: 0,
+        sample: payload != null ? [payload] : [],
+        message: error.message,
+      };
+    }
+  }
+
+  private async debugUsdaReferenceSource(
+    commodity: string,
+  ): Promise<ProviderDebugResult> {
+    const apiKey = process.env.USDA_MARS_API_KEY?.trim();
+    if (!apiKey) {
+      return {
+        provider: 'USDA Market News',
+        ok: false,
+        query: { commodity },
+        rowCount: 0,
+        sample: [],
+        message: 'USDA_MARS_API_KEY is not configured',
+      };
+    }
+
+    try {
+      const auth = Buffer.from(`${apiKey}:`).toString('base64');
+      const response = await axios.get<any>(
+        'https://marsapi.ams.usda.gov/services/v1.2/reports/3324/Details',
+        {
+          timeout: 15000,
+          headers: {
+            Authorization: `Basic ${auth}`,
+          },
+          params: {
+            q: `commodity=${commodity}`,
+            allSections: true,
+          },
+        },
+      );
+
+      const rows = this.extractUsdaRows(response.data);
+      return {
+        provider: 'USDA Market News',
+        ok: true,
+        status: response.status,
+        query: {
+          commodity,
+          reportId: 3324,
+          q: `commodity=${commodity}`,
+          allSections: true,
+        },
+        rowCount: rows.length,
+        sample: rows.slice(0, 3),
+      };
+    } catch (error) {
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const payload = axios.isAxiosError(error) ? error.response?.data : undefined;
+      return {
+        provider: 'USDA Market News',
+        ok: false,
+        status,
+        query: {
+          commodity,
+          reportId: 3324,
+          q: `commodity=${commodity}`,
+          allSections: true,
+        },
+        rowCount: 0,
+        sample: payload != null ? [payload] : [],
+        message: error.message,
+      };
     }
   }
 

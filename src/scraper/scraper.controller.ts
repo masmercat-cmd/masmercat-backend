@@ -1,4 +1,4 @@
-import { Controller, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ScraperService } from './scraper.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -19,6 +19,19 @@ export class ScraperController {
       message: 'Reference prices synchronized',
       ...result,
     };
+  }
+
+  @Get('reference-debug')
+  async getReferenceDebug(
+    @Query('euProduct') euProduct?: string,
+    @Query('euCountry') euCountry?: string,
+    @Query('usdaCommodity') usdaCommodity?: string,
+  ) {
+    return this.scraperService.debugReferenceSources({
+      euProduct,
+      euCountry,
+      usdaCommodity,
+    });
   }
 
  
