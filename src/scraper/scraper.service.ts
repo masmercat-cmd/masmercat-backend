@@ -979,8 +979,7 @@ export class ScraperService {
 
   private extractUsdaRows(payload: any): UsdaApiRow[] {
     if (Array.isArray(payload)) {
-      const nested = payload.flatMap((item) => this.extractUsdaRows(item));
-      return nested.length > 0 ? nested : payload;
+      return payload.flatMap((item) => this.extractUsdaRows(item));
     }
 
     if (payload && typeof payload === 'object') {
@@ -990,7 +989,9 @@ export class ScraperService {
         'item_description' in payload ||
         'variety' in payload ||
         'weighted_average' in payload ||
-        'average_price' in payload;
+        'average_price' in payload ||
+        'price' in payload ||
+        'mostly_price' in payload;
       if (looksLikeLeafRow) {
         return [payload as UsdaApiRow];
       }
@@ -1011,6 +1012,8 @@ export class ScraperService {
           return extracted;
         }
       }
+
+      return Object.values(payload).flatMap((value) => this.extractUsdaRows(value));
     }
 
     return [];
