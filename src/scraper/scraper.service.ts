@@ -504,7 +504,7 @@ export class ScraperService {
   } | null> {
     try {
       const response = await axios.get<EuApiRow[]>(
-        'https://agridata.ec.europa.eu/extensions/DataPortal/api/fruitAndVegetable/pricesSupplyChain',
+        'https://agridata.ec.europa.eu/api/fruitAndVegetable/pricesSupplyChain',
         {
           timeout: 15000,
           params: {
@@ -569,7 +569,6 @@ export class ScraperService {
           },
           params: {
             lastReports: 1,
-            q: `commodity=${commodity}`,
           },
         },
       );
@@ -582,6 +581,14 @@ export class ScraperService {
               row.average_price ??
               row.mostly_price ??
               row.price;
+            const searchableText = [
+              row.commodity,
+              row.item_name,
+              row.variety,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
             const price = Number.parseFloat(
               `${rawPrice ?? 0}`.replace(/[^0-9.\-]/g, ''),
             );
@@ -589,7 +596,7 @@ export class ScraperService {
               row.published_date ?? row.report_date ?? row.report_begin_date ?? '';
 
             return {
-              commodity: `${row.commodity ?? row.item_name ?? ''}`,
+              commodity: searchableText,
               price,
               unitRaw: `${row.unit ?? row.package ?? 'USD/unit'}`,
               productStage: row.store_type
@@ -600,7 +607,7 @@ export class ScraperService {
           })
           .filter(
             (row) =>
-              row.commodity.toLowerCase().includes(commodity.toLowerCase()) &&
+              row.commodity.includes(commodity.toLowerCase()) &&
               !Number.isNaN(row.price) &&
               row.price > 0 &&
               row.referenceDate != null,
