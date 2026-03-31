@@ -21,6 +21,15 @@ interface ReferencePriceInput {
   metadata?: Record<string, any>;
 }
 
+export interface ProviderDiagnostics {
+  provider: string;
+  attempted: number;
+  matched: number;
+  saved: number;
+  skipped: number;
+  notes: string[];
+}
+
 interface EuApiRow {
   memberStateCode?: string;
   beginDate?: string;
@@ -291,16 +300,24 @@ export class ScraperService {
     await this.generateLotsFromPrices();
   }
 
-  async syncReferencePrices(): Promise<{ saved: number }> {
+  async syncReferencePrices(): Promise<{
+    saved: number;
+    diagnostics: ProviderDiagnostics[];
+  }> {
     const seeded = await this.ensureReferenceCatalog();
     const fruits = seeded.fruits;
     const markets = seeded.markets;
 
-    const euSaved = await this.syncEuReferencePrices(fruits, markets);
-    const usdaSaved = await this.syncUsdaReferencePrices(fruits, markets);
+    const euResult = await this.syncEuReferencePrices(fruits, markets);
+    const usdaResult = await this.syncUsdaReferencePrices(fruits, markets);
+    const euSaved = euResult.saved;
+    const usdaSaved = usdaResult.saved;
     const saved = euSaved + usdaSaved;
     this.logger.log(`Reference prices synchronized: ${saved}`);
-    return { saved };
+    return {
+      saved,
+      diagnostics: [euResult.diagnostics, usdaResult.diagnostics],
+    };
   }
 
   private async ensureReferenceCatalog(): Promise<{
@@ -434,18 +451,31 @@ export class ScraperService {
   private async syncEuReferencePrices(
     fruits: Fruit[],
     markets: Market[],
-  ): Promise<number> {
+  ): Promise<{ saved: number; diagnostics: ProviderDiagnostics }> {
     let saved = 0;
+    let attempted = 0;
+    let matched = 0;
     const currentYear = new Date().getUTCFullYear();
+    const diagnostics: ProviderDiagnostics = {
+      provider: 'EU AgriData',
+      attempted: 0,
+      matched: 0,
+      saved: 0,
+      skipped: 0,
+      notes: [],
+    };
 
     for (const fruit of fruits) {
       const euProduct = this.resolveEuProductName(fruit.nameEs);
-      if (!euProduct) continue;
+      if (!euProduct) {
+        diagnostics.skipped += 1;
+        continue;
+      }
 
       const marketsByCountry = new Map<string, Market[]>();
       for (const market of markets) {
         const code = this.resolveCountryCode(market.country);
-        if (!code) continue;
+        if (!code || code === 'US') continue;
 
         const bucket = marketsByCountry.get(code) ?? [];
         bucket.push(market);
@@ -453,8 +483,13 @@ export class ScraperService {
       }
 
       for (const [countryCode, countryMarkets] of marketsByCountry.entries()) {
+        attempted += 1;
         const latest = await this.fetchLatestEuPrice(euProduct, countryCode, currentYear);
-        if (!latest) continue;
+        if (!latest) {
+          diagnostics.notes.push(`No EU price for ${euProduct}/${countryCode}`);
+          continue;
+        }
+        matched += 1;
 
         for (const market of countryMarkets) {
           await this.upsertReferencePrice({
@@ -477,31 +512,56 @@ export class ScraperService {
       }
     }
 
-    return saved;
+    diagnostics.attempted = attempted;
+    diagnostics.matched = matched;
+    diagnostics.saved = saved;
+    diagnostics.notes = diagnostics.notes.slice(0, 20);
+    return { saved, diagnostics };
   }
 
   private async syncUsdaReferencePrices(
     fruits: Fruit[],
     markets: Market[],
-  ): Promise<number> {
+  ): Promise<{ saved: number; diagnostics: ProviderDiagnostics }> {
     const apiKey = process.env.USDA_MARS_API_KEY?.trim();
+    const diagnostics: ProviderDiagnostics = {
+      provider: 'USDA Market News',
+      attempted: 0,
+      matched: 0,
+      saved: 0,
+      skipped: 0,
+      notes: [],
+    };
     if (!apiKey) {
       this.logger.log('USDA provider skipped: USDA_MARS_API_KEY is not configured');
-      return 0;
+      diagnostics.notes.push('USDA_MARS_API_KEY is not configured');
+      diagnostics.skipped = fruits.length;
+      return { saved: 0, diagnostics };
     }
 
     const usaMarkets = markets.filter(
       (market) => this.resolveCountryCode(market.country) === 'US',
     );
-    if (usaMarkets.length === 0) return 0;
+    if (usaMarkets.length === 0) {
+      diagnostics.notes.push('No active US markets found');
+      return { saved: 0, diagnostics };
+    }
 
     let saved = 0;
     for (const fruit of fruits) {
       const commodity = this.resolveUsdaCommodityName(fruit.nameEs);
-      if (!commodity) continue;
+      if (!commodity) {
+        diagnostics.skipped += 1;
+        continue;
+      }
 
+      diagnostics.attempted += 1;
       const latest = await this.fetchLatestUsdaRetailPrice(apiKey, commodity);
-      if (!latest) continue;
+      if (!latest) {
+        diagnostics.notes.push(`No USDA price for ${commodity}`);
+        continue;
+      }
+      diagnostics.matched += 1;
 
       for (const market of usaMarkets) {
         await this.upsertReferencePrice({
@@ -524,7 +584,9 @@ export class ScraperService {
       }
     }
 
-    return saved;
+    diagnostics.saved = saved;
+    diagnostics.notes = diagnostics.notes.slice(0, 20);
+    return { saved, diagnostics };
   }
 
   private async fetchLatestEuPrice(
