@@ -489,6 +489,9 @@ export class ScraperService {
           diagnostics.notes.push(`No EU price for ${euProduct}/${countryCode}`);
           continue;
         }
+        if (latest.debugNote) {
+          diagnostics.notes.push(latest.debugNote);
+        }
         matched += 1;
 
         for (const market of countryMarkets) {
@@ -561,6 +564,9 @@ export class ScraperService {
         diagnostics.notes.push(`No USDA price for ${commodity}`);
         continue;
       }
+      if (latest.debugNote) {
+        diagnostics.notes.push(latest.debugNote);
+      }
       diagnostics.matched += 1;
 
       for (const market of usaMarkets) {
@@ -599,12 +605,12 @@ export class ScraperService {
     unitType: string;
     productStage: string;
     referenceDate: Date;
+    debugNote?: string;
   } | null> {
     try {
-      const productVariants = Array.from(
-        new Set([product, product.toLowerCase(), product.toUpperCase()]),
-      );
+      const productVariants = Array.from(new Set([product.toLowerCase(), product, product.toUpperCase()]));
       let rows: EuApiRow[] = [];
+      let debugNote = '';
 
       for (const productVariant of productVariants) {
         try {
@@ -623,20 +629,19 @@ export class ScraperService {
 
           rows = Array.isArray(response.data) ? response.data : [];
           if (rows.length > 0) {
+            debugNote = `EU rows ${rows.length} for ${productVariant}/${memberStateCode}`;
             break;
           }
         } catch (variantError) {
           const status = axios.isAxiosError(variantError)
             ? variantError.response?.status
             : undefined;
-          this.logger.warn(
-            `EU reference fetch variant failed for ${productVariant}/${memberStateCode}: ${status ?? 'no-status'} ${variantError.message}`,
-          );
+          debugNote = `EU ${productVariant}/${memberStateCode}: ${status ?? 'no-status'} ${variantError.message}`;
         }
       }
 
       if (rows.length === 0) {
-        this.logger.log(`EU reference returned 0 rows for ${product}/${memberStateCode}`);
+        this.logger.log(debugNote || `EU reference returned 0 rows for ${product}/${memberStateCode}`);
         return null;
       }
 
@@ -666,6 +671,7 @@ export class ScraperService {
         unitType,
         productStage: latest.productStage,
         referenceDate: latest.referenceDate!,
+        debugNote,
       };
     } catch (error) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
@@ -684,18 +690,20 @@ export class ScraperService {
     unitType: string;
     productStage: string;
     referenceDate: Date;
+    debugNote?: string;
   } | null> {
     try {
       const auth = Buffer.from(`${apiKey}:`).toString('base64');
       const response = await axios.get<any>(
-        'https://marsapi.ams.usda.gov/services/v1.2/reports/3324/report%20details',
+        'https://marsapi.ams.usda.gov/services/v1.2/reports/3324/Details',
         {
           timeout: 15000,
           headers: {
             Authorization: `Basic ${auth}`,
           },
           params: {
-            lastReports: 1,
+            q: `commodity=${commodity}`,
+            allSections: true,
           },
         },
       );
@@ -763,7 +771,12 @@ export class ScraperService {
         );
 
       if (parsed.length === 0) {
-        this.logger.log(`USDA report 3324 returned rows but no commodity match for ${commodity}`);
+        const sample = rows
+          .slice(0, 5)
+          .map((row) => [row.commodity, row.item_name, row.item_description, row.variety].filter(Boolean).join(' | '))
+          .filter((value) => value.trim().length > 0)
+          .join(' || ');
+        this.logger.log(`USDA report 3324 returned rows but no commodity match for ${commodity}. Sample: ${sample}`);
         return null;
       }
 
@@ -773,6 +786,7 @@ export class ScraperService {
         unitType: this.normalizeUsdaUnit(latest.unitRaw),
         productStage: latest.productStage,
         referenceDate: latest.referenceDate!,
+        debugNote: `USDA matched ${parsed.length} rows for ${commodity}`,
       };
     } catch (error) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
