@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+import WebSocket from 'ws';
 import { Fruit } from '../entities/fruit.entity';
 import { Market } from '../entities/market.entity';
 import { Lot, QualityGrade, UnitType, LotStatus } from '../entities/lot.entity';
@@ -2823,12 +2824,7 @@ export class ScraperService {
     request: (handle: number, method: string, params: any[]) => Promise<any>;
     close: () => void;
   }> {
-    const WebSocketCtor = (globalThis as any).WebSocket;
-    if (typeof WebSocketCtor !== 'function') {
-      throw new Error('WebSocket client is not available in this Node runtime');
-    }
-
-    const socket = new WebSocketCtor(ScraperService.euQlikWsUrl, {
+    const socket = new WebSocket(ScraperService.euQlikWsUrl, {
       headers: {
         Origin: 'https://agridata.ec.europa.eu',
       },
@@ -2836,17 +2832,15 @@ export class ScraperService {
 
     await new Promise<void>((resolve, reject) => {
       const onOpen = () => {
-        socket.removeEventListener('open', onOpen);
-        socket.removeEventListener('error', onError);
+        socket.off('error', onError);
         resolve();
       };
-      const onError = (event: any) => {
-        socket.removeEventListener('open', onOpen);
-        socket.removeEventListener('error', onError);
-        reject(event?.error ?? new Error('EU Qlik websocket connection failed'));
+      const onError = (error: Error) => {
+        socket.off('open', onOpen);
+        reject(error ?? new Error('EU Qlik websocket connection failed'));
       };
-      socket.addEventListener('open', onOpen);
-      socket.addEventListener('error', onError);
+      socket.once('open', onOpen);
+      socket.once('error', onError);
     });
 
     let nextId = 1;
@@ -2858,8 +2852,8 @@ export class ScraperService {
       pending.clear();
     };
 
-    socket.addEventListener('message', (event: any) => {
-      const raw = typeof event?.data === 'string' ? event.data : `${event?.data ?? ''}`;
+    socket.on('message', (event: WebSocket.RawData) => {
+      const raw = typeof event === 'string' ? event : event.toString();
       let payload: any;
       try {
         payload = JSON.parse(raw);
@@ -2881,12 +2875,12 @@ export class ScraperService {
       resolver.resolve(payload);
     });
 
-    socket.addEventListener('close', () => {
+    socket.on('close', () => {
       rejectPending(new Error('EU Qlik websocket connection closed'));
     });
 
-    socket.addEventListener('error', (event: any) => {
-      rejectPending(event?.error ?? new Error('EU Qlik websocket error'));
+    socket.on('error', (error: Error) => {
+      rejectPending(error ?? new Error('EU Qlik websocket error'));
     });
 
     return {
@@ -2913,7 +2907,7 @@ export class ScraperService {
           }, 15000);
         }),
       close: () => {
-        if (socket.readyState === WebSocketCtor.OPEN || socket.readyState === WebSocketCtor.CONNECTING) {
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
           socket.close();
         }
       },
