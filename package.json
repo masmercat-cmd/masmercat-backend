@@ -26,6 +26,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/throttler": "^5.1.1",
     "@nestjs/typeorm": "^10.0.1",
+    "adm-zip": "^0.5.17",
     "aws-sdk": "^2.1540.0",
     "axios": "^1.13.5",
     "bcryptjs": "^2.4.3",
@@ -45,7 +46,8 @@
     "reflect-metadata": "^0.2.1",
     "rxjs": "^7.8.1",
     "sqlite3": "^5.1.7",
-    "typeorm": "^0.3.19"
+    "typeorm": "^0.3.19",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.0",

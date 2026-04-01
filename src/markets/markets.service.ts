@@ -8,12 +8,76 @@ import { Lot } from '../entities/lot.entity';
 interface ReferencePriceFilters {
   query?: string;
   country?: string;
+  region?: string;
+  source?: string;
   marketId?: string;
   limit?: number;
 }
 
 @Injectable()
 export class MarketsService {
+  private static readonly countryAliases: Record<string, string> = {
+    spain: 'es',
+    espana: 'es',
+    france: 'fr',
+    francia: 'fr',
+    italy: 'it',
+    italia: 'it',
+    germany: 'de',
+    alemania: 'de',
+    portugal: 'pt',
+    netherlands: 'nl',
+    'paises bajos': 'nl',
+    argentina: 'ar',
+    brazil: 'br',
+    brasil: 'br',
+    chile: 'cl',
+    paraguay: 'py',
+    uruguay: 'uy',
+    australia: 'au',
+    'new zealand': 'nz',
+    china: 'cn',
+    india: 'in',
+    japan: 'jp',
+    singapore: 'sg',
+    thailand: 'th',
+    vietnam: 'vn',
+    morocco: 'ma',
+    marruecos: 'ma',
+    egypt: 'eg',
+    egipto: 'eg',
+    algeria: 'dz',
+    argelia: 'dz',
+    tunisia: 'tn',
+    tunez: 'tn',
+    'saudi arabia': 'sa',
+    'arabia saudi': 'sa',
+    'united arab emirates': 'ae',
+    emiratos: 'ae',
+    qatar: 'qa',
+    kuwait: 'kw',
+    jordan: 'jo',
+    jordania: 'jo',
+    lebanon: 'lb',
+    libano: 'lb',
+    canada: 'ca',
+    mexico: 'mx',
+    'united states': 'us',
+    usa: 'us',
+    eeuu: 'us',
+    russia: 'ru',
+    rusia: 'ru',
+  };
+  private static readonly regionCountryMap: Record<string, string[]> = {
+    eu: ['es', 'fr', 'it', 'de', 'pt', 'nl'],
+    mercosur: ['ar', 'br', 'cl', 'py', 'uy'],
+    australia: ['au', 'nz'],
+    asia: ['cn', 'in', 'jp', 'sg', 'th', 'vn'],
+    arab_countries: ['ma', 'eg', 'dz', 'tn', 'sa', 'ae', 'qa', 'kw', 'jo', 'lb'],
+    north_america: ['us', 'ca', 'mx'],
+    russia: ['ru'],
+  };
+
   constructor(
     @InjectRepository(Market)
     private readonly marketsRepository: Repository<Market>,
@@ -43,14 +107,9 @@ export class MarketsService {
     const filtered = rows.filter((row) => {
       if (!row.market?.active || !row.fruit?.active) return false;
       if (filters.marketId && row.marketId !== filters.marketId) return false;
-      if (filters.country) {
-        const requested = `${filters.country}`.trim().toLowerCase();
-        const marketCountry = `${row.market?.country ?? ''}`.trim().toLowerCase();
-        const sourceRegion = `${row.additionalData?.sourceRegion ?? ''}`.trim().toLowerCase();
-        if (requested != marketCountry && requested != sourceRegion) {
-          return false;
-        }
-      }
+      if (!this.matchesCountryFilter(row, filters.country)) return false;
+      if (!this.matchesRegionFilter(row, filters.region)) return false;
+      if (!this.matchesSourceFilter(row, filters.source)) return false;
       if (!query) return true;
 
       const values = [
@@ -106,6 +165,9 @@ export class MarketsService {
       if (!row.market?.active || row.market.latitude == null || row.market.longitude == null) {
         continue;
       }
+      if (!this.matchesCountryFilter(row, filters.country)) continue;
+      if (!this.matchesRegionFilter(row, filters.region)) continue;
+      if (!this.matchesSourceFilter(row, filters.source)) continue;
 
       const group = grouped.get(row.marketId) ?? {
         marketId: row.marketId,
@@ -113,6 +175,7 @@ export class MarketsService {
         country: row.market.country,
         city: row.market.city,
         continent: row.market.continent,
+        region: this.resolveRegionKey(row),
         latitude: Number(row.market.latitude),
         longitude: Number(row.market.longitude),
         currency: (row.additionalData?.currency as string) ?? 'EUR',
@@ -196,6 +259,10 @@ export class MarketsService {
         country: lot.market.country,
         city: lot.market.city,
         continent: lot.market.continent,
+        region: this.resolveRegionFromCountryOrContinent(
+          `${lot.market.country ?? ''}`,
+          `${lot.market.continent ?? ''}`,
+        ),
         latitude: Number(lot.market.latitude),
         longitude: Number(lot.market.longitude),
         currency: 'EUR',
@@ -215,6 +282,10 @@ export class MarketsService {
         unitType: lot.unitType,
         source: 'MasMercat lots',
         sourceRegion: lot.market.country,
+        region: this.resolveRegionFromCountryOrContinent(
+          `${lot.market.country ?? ''}`,
+          `${lot.market.continent ?? ''}`,
+        ),
         productStage: 'Market lot price',
         referenceDate: lot.createdAt,
         updatedAt: lot.createdAt,
@@ -274,9 +345,90 @@ export class MarketsService {
       unitType: row.unitType ?? 'kg',
       source: (row.additionalData?.source as string) ?? 'MasMercat',
       sourceRegion: (row.additionalData?.sourceRegion as string) ?? row.market?.country ?? '',
+      region: this.resolveRegionKey(row),
       productStage: (row.additionalData?.productStage as string) ?? 'Reference price',
       referenceDate: row.date,
       updatedAt: row.createdAt,
     };
+  }
+
+  private matchesCountryFilter(row: PriceHistory, country?: string): boolean {
+    if (!country) return true;
+
+    const requested = this.resolveCountryCode(`${country}`);
+    const marketCountry = this.resolveCountryCode(`${row.market?.country ?? ''}`);
+    const sourceRegion = this.resolveCountryCode(`${row.additionalData?.sourceRegion ?? ''}`);
+
+    return requested !== '' && (requested === marketCountry || requested === sourceRegion);
+  }
+
+  private matchesRegionFilter(row: PriceHistory, region?: string): boolean {
+    if (!region) return true;
+    return this.resolveRegionKey(row) === this.normalizeRegionKey(region);
+  }
+
+  private matchesSourceFilter(row: PriceHistory, source?: string): boolean {
+    if (!source) return true;
+    return this
+      .normalizeText(`${row.additionalData?.source ?? ''}`)
+      .includes(this.normalizeText(source));
+  }
+
+  private resolveRegionKey(row: PriceHistory): string {
+    const metadataRegion = this.normalizeRegionKey(`${row.additionalData?.region ?? ''}`);
+    if (metadataRegion) {
+      return metadataRegion;
+    }
+
+    return this.resolveRegionFromCountryOrContinent(
+      `${row.market?.country ?? ''}`,
+      `${row.market?.continent ?? ''}`,
+    );
+  }
+
+  private resolveRegionFromCountryOrContinent(country: string, continent: string): string {
+    const normalizedCountry = this.resolveCountryCode(country);
+    const normalizedContinent = this.normalizeText(continent);
+
+    for (const [region, countries] of Object.entries(MarketsService.regionCountryMap)) {
+      if (countries.some((code) => normalizedCountry.includes(code))) {
+        return region;
+      }
+    }
+
+    if (normalizedContinent.includes('europe')) return 'eu';
+    if (normalizedContinent.includes('asia')) return 'asia';
+    if (normalizedContinent.includes('oceania')) return 'australia';
+    if (normalizedContinent.includes('south america')) return 'mercosur';
+    if (normalizedContinent.includes('north america')) return 'north_america';
+    return normalizedContinent || 'global';
+  }
+
+  private normalizeText(value: string): string {
+    return `${value ?? ''}`
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private normalizeRegionKey(value: string): string {
+    const normalized = this.normalizeText(value);
+    return normalized === 'usa' ? 'north_america' : normalized;
+  }
+
+  private resolveCountryCode(value: string): string {
+    const normalized = this.normalizeText(value);
+    if (normalized.length == 2) {
+      return normalized;
+    }
+
+    for (const [alias, code] of Object.entries(MarketsService.countryAliases)) {
+      if (normalized.includes(alias)) {
+        return code;
+      }
+    }
+
+    return normalized;
   }
 }

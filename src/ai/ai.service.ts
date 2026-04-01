@@ -11,6 +11,9 @@ import { AiScanResult, User } from '../entities';
 export class ChatMessageDto {
   message: string;
   language?: string;
+  image?: string;
+  imageMimeType?: string;
+  imageName?: string;
 }
 
 export class TransportTariffDto {
@@ -1046,15 +1049,36 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
   }
 
   async chat(chatMessageDto: ChatMessageDto): Promise<string> {
-    const { message, language = 'es' } = chatMessageDto;
+    const {
+      message,
+      language = 'es',
+      image,
+      imageMimeType = 'image/jpeg',
+      imageName = 'image.jpg',
+    } = chatMessageDto;
     const systemPrompt = this.systemPrompts[language] || this.systemPrompts.es;
 
     try {
+      const userContent = image
+        ? [
+            {
+              type: 'text' as const,
+              text: `${message}\n\nImagen adjunta: ${imageName}`,
+            },
+            {
+              type: 'image_url' as const,
+              image_url: {
+                url: `data:${imageMimeType};base64,${image}`,
+              },
+            },
+          ]
+        : message;
+
       const completion = await this.openai.chat.completions.create({
         model: 'gpt-4o', // más estable y actual para chat
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: message },
+          { role: 'user', content: userContent },
         ],
         temperature: 0.7,
         max_tokens: 500,
