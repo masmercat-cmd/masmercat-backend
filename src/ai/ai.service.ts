@@ -965,6 +965,33 @@ Reglas:
     };
   }
 
+  private shouldRefinePalletEstimate(parsed: any): boolean {
+    const envase = this.normalizeEnvase(parsed?.envase);
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    const cajas = this.toNumber(parsed?.cajas_estimadas ?? parsed?.cajas_aprox);
+    const confianza = `${parsed?.confianza_estimacion ?? ''}`.trim().toLowerCase();
+    const profundidad = this.toNumber(parsed?.profundidad_estimada);
+    const capas = this.toNumber(parsed?.capas_estimadas);
+    const cajasPorCapa = this.toNumber(parsed?.cajas_por_capa);
+
+    if (confianza.includes('baja') || confianza.includes('low')) {
+      return true;
+    }
+
+    if (cajas <= 72) {
+      return true;
+    }
+
+    if (cajas <= 96 && (profundidad <= 1 || capas <= 1 || cajasPorCapa <= 0)) {
+      return true;
+    }
+
+    return false;
+  }
+
   async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
     const imageHash =
       `${payload?.image_hash ?? payload?.imageHash ?? payload?.resultado_ai?.image_hash ?? payload?.result?.image_hash ?? ''}`.trim() ||
@@ -1598,12 +1625,7 @@ IMPORTANT:
     
     let parsed = JSON.parse(response);
     this.logVisionSnapshot('OpenAI attempt A raw JSON', parsed);
-    const envaseInicial = this.normalizeEnvase(parsed.envase);
-    const cajasIniciales = this.toNumber(
-      parsed.cajas_estimadas ?? parsed.cajas_aprox,
-    );
-
-    if (envaseInicial.includes('palet') && cajasIniciales <= 120) {
+    if (this.shouldRefinePalletEstimate(parsed)) {
       parsed = await this.refinePalletEstimate(img, parsed, lang);
     }
 
@@ -1651,12 +1673,7 @@ try {
 
   let parsed = JSON.parse(response);
   this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
-  const envaseInicial = this.normalizeEnvase(parsed.envase);
-  const cajasIniciales = this.toNumber(
-    parsed.cajas_estimadas ?? parsed.cajas_aprox,
-  );
-
-  if (envaseInicial.includes('palet') && cajasIniciales <= 120) {
+  if (this.shouldRefinePalletEstimate(parsed)) {
     parsed = await this.refinePalletEstimate(img, parsed, lang);
   }
 
