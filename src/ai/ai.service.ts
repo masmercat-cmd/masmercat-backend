@@ -1368,7 +1368,7 @@ Rules:
   async analyzeFruitImage(
     base64Image: string,
     language: string = 'es',
-    options?: { imagePath?: string },
+    options?: { imagePath?: string; fastMode?: boolean },
   ): Promise<any> {
   // Limpieza y normalización
   let img = (base64Image || '').trim();
@@ -1625,7 +1625,7 @@ IMPORTANT:
     
     let parsed = JSON.parse(response);
     this.logVisionSnapshot('OpenAI attempt A raw JSON', parsed);
-    if (this.shouldRefinePalletEstimate(parsed)) {
+    if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
       parsed = await this.refinePalletEstimate(img, parsed, lang);
     }
 
@@ -1673,7 +1673,7 @@ try {
 
   let parsed = JSON.parse(response);
   this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
-  if (this.shouldRefinePalletEstimate(parsed)) {
+  if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
     parsed = await this.refinePalletEstimate(img, parsed, lang);
   }
 
