@@ -131,7 +131,7 @@ export class AiService {
   }
 
   private inferGermanyZoneFromPostalPrefix(prefix: number): 'Norte' | 'Centro' | 'Sur' {
-    if (prefix >= 70) {
+    if (prefix >= 60) {
       return 'Sur';
     }
     if (prefix >= 40) {
@@ -285,16 +285,18 @@ export class AiService {
       parsed.destination_postal_codes,
     );
 
-    const rawDestination = `${parsed.destination ?? destination ?? ''}`.trim();
+    const requestedDestination = `${destination ?? ''}`.trim();
+    const rawDestination = /\d{2,}/.test(requestedDestination)
+      ? requestedDestination
+      : `${parsed.destination ?? requestedDestination ?? ''}`.trim();
     const resolvedGermanPostal =
       this.isCastilloGermanyTariff(raw) && /\d{2,}/.test(rawDestination)
         ? this.resolveGermanPostalDestination(raw, rawDestination)
         : null;
 
     if (resolvedGermanPostal) {
-      if (!parsed.destination || `${parsed.destination}`.trim() === rawDestination) {
-        parsed.destination = resolvedGermanPostal.city || parsed.destination || rawDestination;
-      }
+      parsed.destination =
+        resolvedGermanPostal.city || `${parsed.destination ?? ''}`.trim() || rawDestination;
       if (resolvedGermanPostal.city) {
         destinationOptions.unshift(resolvedGermanPostal.city);
       }
