@@ -96,6 +96,84 @@ export class AiService {
     ].filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
   }
 
+  private isCastilloGermanyTariff(raw: string): boolean {
+    const normalized = `${raw ?? ''}`.toLowerCase();
+    return normalized.includes('alemania') && normalized.includes('castillo');
+  }
+
+  private extractGermanPostalCityEntries(raw: string): Array<{ start: number; end: number; city: string }> {
+    const entries: Array<{ start: number; end: number; city: string }> = [];
+    const regex = /(\d{2})(?:\s*-\s*(\d{2}))?[.\s…-]+([A-Za-zÀ-ÿ\/\-\s]+?)(?=\s+\d{2}(?:\s*-\s*\d{2})?[.\s…-]+|$)/g;
+    const compact = raw
+      .replace(/\r/g, ' ')
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ');
+
+    for (const match of compact.matchAll(regex)) {
+      const start = parseInt(match[1], 10);
+      const end = parseInt(match[2] || match[1], 10);
+      const city = `${match[3] ?? ''}`.trim();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || !city) {
+        continue;
+      }
+      entries.push({ start, end, city });
+    }
+
+    return entries.filter(
+      (entry, index, list) =>
+        list.findIndex(
+          (candidate) =>
+            candidate.start === entry.start &&
+            candidate.end === entry.end &&
+            candidate.city === entry.city,
+        ) === index,
+    );
+  }
+
+  private inferGermanyZoneFromPostalPrefix(prefix: number): 'Norte' | 'Centro' | 'Sur' {
+    if (prefix >= 70) {
+      return 'Sur';
+    }
+    if (prefix >= 40) {
+      return 'Centro';
+    }
+    return 'Norte';
+  }
+
+  private resolveGermanPostalDestination(
+    raw: string,
+    value: string,
+  ): { city: string; postalRange: string; zone: 'Norte' | 'Centro' | 'Sur' } | null {
+    const digits = `${value ?? ''}`.replace(/\D/g, '');
+    if (digits.length < 2) {
+      return null;
+    }
+
+    const prefix = parseInt(digits.slice(0, 2), 10);
+    if (!Number.isFinite(prefix)) {
+      return null;
+    }
+
+    const entries = this.extractGermanPostalCityEntries(raw);
+    const match = entries.find((entry) => prefix >= entry.start && prefix <= entry.end);
+    if (!match) {
+      return {
+        city: '',
+        postalRange: digits.slice(0, 2),
+        zone: this.inferGermanyZoneFromPostalPrefix(prefix),
+      };
+    }
+
+    return {
+      city: match.city,
+      postalRange:
+        match.start === match.end
+          ? `${match.start}`.padStart(2, '0')
+          : `${`${match.start}`.padStart(2, '0')}-${`${match.end}`.padStart(2, '0')}`,
+      zone: this.inferGermanyZoneFromPostalPrefix(prefix),
+    };
+  }
+
   private normalizePriceTiers(value: any): Array<Record<string, any>> {
     if (!Array.isArray(value)) {
       return [];
@@ -206,6 +284,31 @@ export class AiService {
       parsed.destination_options,
       parsed.destination_postal_codes,
     );
+
+    const rawDestination = `${parsed.destination ?? destination ?? ''}`.trim();
+    const resolvedGermanPostal =
+      this.isCastilloGermanyTariff(raw) && /\d{2,}/.test(rawDestination)
+        ? this.resolveGermanPostalDestination(raw, rawDestination)
+        : null;
+
+    if (resolvedGermanPostal) {
+      if (!parsed.destination || `${parsed.destination}`.trim() === rawDestination) {
+        parsed.destination = resolvedGermanPostal.city || parsed.destination || rawDestination;
+      }
+      if (resolvedGermanPostal.city) {
+        destinationOptions.unshift(resolvedGermanPostal.city);
+      }
+      destinationOptions.unshift(resolvedGermanPostal.zone);
+      parsed.destination_postal_codes = [
+        ...(Array.isArray(parsed.destination_postal_codes) ? parsed.destination_postal_codes : []),
+        resolvedGermanPostal.postalRange,
+      ];
+      parsed.notes = `${`${parsed.notes ?? ''}`.trim()} ${
+        resolvedGermanPostal.city
+          ? `Destino detectado por CP: ${resolvedGermanPostal.city} (${resolvedGermanPostal.postalRange}), zona estimada ${resolvedGermanPostal.zone}.`
+          : `Zona estimada por CP: ${resolvedGermanPostal.zone}.`
+      }`.trim();
+    }
 
     return {
       carrier: inferredCarrier,
