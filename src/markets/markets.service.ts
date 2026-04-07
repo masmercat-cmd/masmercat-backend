@@ -201,6 +201,76 @@ export class MarketsService {
       grouped.set(row.marketId, group);
     }
 
+    const activeLots = await this.lotsRepository.find({
+      relations: ['fruit', 'market'],
+      where: { isActive: true },
+      take: 300,
+      order: { createdAt: 'DESC' },
+    });
+
+    for (const lot of activeLots) {
+      if (!this.matchesLotFilters(lot, filters)) {
+        continue;
+      }
+
+      const lotProductName = `${lot.fruit?.nameEs ?? lot.fruit?.nameEn ?? ''}`.trim();
+      const group = grouped.get(lot.marketId) ?? {
+        marketId: lot.marketId,
+        marketName: lot.market.name,
+        country: lot.market.country,
+        city: lot.market.city,
+        continent: lot.market.continent,
+        region: this.resolveRegionFromCountryOrContinent(
+          `${lot.market.country ?? ''}`,
+          `${lot.market.continent ?? ''}`,
+        ),
+        latitude: Number(lot.market.latitude),
+        longitude: Number(lot.market.longitude),
+        currency: 'EUR',
+        source: 'MasMercat lots',
+        lastReferenceDate: lot.createdAt,
+        lastUpdatedAt: lot.createdAt,
+        priceItems: [] as any[],
+        lotCount: 0,
+        lotProducts: [] as string[],
+      };
+
+      group.lotCount = Number(group.lotCount ?? 0) + 1;
+      if (lotProductName && !group.lotProducts.includes(lotProductName)) {
+        group.lotProducts.push(lotProductName);
+      }
+
+      if (group.priceItems.length === 0) {
+        group.priceItems.push({
+          fruitId: lot.fruit?.id,
+          fruitName: lotProductName,
+          marketId: lot.marketId,
+          marketName: lot.market.name,
+          country: lot.market.country,
+          city: lot.market.city,
+          price: Number(lot.price),
+          currency: 'EUR',
+          unitType: lot.unitType,
+          source: 'MasMercat lots',
+          sourceRegion: lot.market.country,
+          region: this.resolveRegionFromCountryOrContinent(
+            `${lot.market.country ?? ''}`,
+            `${lot.market.continent ?? ''}`,
+          ),
+          productStage: 'Market lot price',
+          referenceDate: lot.createdAt,
+          updatedAt: lot.createdAt,
+        });
+      }
+
+      if (new Date(lot.createdAt) > new Date(group.lastReferenceDate)) {
+        group.lastReferenceDate = lot.createdAt;
+        group.lastUpdatedAt = lot.createdAt;
+      }
+
+      grouped.set(lot.marketId, group);
+    }
+
     let values = Array.from(grouped.values()).map((group) => {
       const validPrices = group.priceItems
         .map((item) => Number(item.price))
@@ -220,6 +290,15 @@ export class MarketsService {
         ...group,
         averagePrice,
         productCount: group.priceItems.length,
+        lotCount: Number(group.lotCount ?? 0),
+        topProducts: Array.from(
+          new Set(
+            [
+              ...group.priceItems.map((item) => `${item.fruitName ?? ''}`.trim()),
+              ...(group.lotProducts ?? []),
+            ].filter((item) => item.length > 0),
+          ),
+        ).slice(0, 5),
       };
     });
 
@@ -231,6 +310,7 @@ export class MarketsService {
           item.city,
           item.continent,
           ...item.priceItems.map((price) => price.fruitName),
+          ...(item.topProducts ?? []),
         ]
           .filter(Boolean)
           .map((value) => `${value}`.toLowerCase());
@@ -539,6 +619,45 @@ export class MarketsService {
     return this
       .normalizeText(`${row.additionalData?.source ?? ''}`)
       .includes(this.normalizeText(source));
+  }
+
+  private matchesLotFilters(lot: Lot, filters: ReferencePriceFilters): boolean {
+    if (!lot.market?.active || lot.market.latitude == null || lot.market.longitude == null) {
+      return false;
+    }
+    if (filters.marketId && lot.marketId !== filters.marketId) {
+      return false;
+    }
+
+    if (filters.country) {
+      const requested = this.resolveCountryCode(`${filters.country}`);
+      const marketCountry = this.resolveCountryCode(`${lot.market?.country ?? ''}`);
+      if (!requested || requested !== marketCountry) {
+        return false;
+      }
+    }
+
+    if (filters.region) {
+      const region = this.resolveRegionFromCountryOrContinent(
+        `${lot.market?.country ?? ''}`,
+        `${lot.market?.continent ?? ''}`,
+      );
+      if (region !== this.normalizeRegionKey(filters.region)) {
+        return false;
+      }
+    }
+
+    if (filters.source) {
+      const requestedSource = this.normalizeText(filters.source);
+      if (
+        requestedSource.length > 0 &&
+        !this.normalizeText('MasMercat lots').includes(requestedSource)
+      ) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private resolveRegionKey(row: PriceHistory): string {
