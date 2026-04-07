@@ -822,7 +822,9 @@ export class AiService {
 
     const tareWeight = isPalot
       ? palletTareKg
-      : Number((boxes * tarePerBoxKg + palletTareKg).toFixed(2));
+      : envase.includes('palet')
+        ? palletTareKg
+        : Number((boxes * tarePerBoxKg).toFixed(2));
 
     parsed.peso_bruto_kg = Number(grossWeight.toFixed(2));
     parsed.peso_estimado_kg = Number(grossWeight.toFixed(2));
