@@ -37,4 +37,17 @@ export class MarketsController {
   ) {
     return this.marketsService.getMapReferencePrices({ query, region, source });
   }
+
+  @Get('eu-official-prices')
+  async getEuOfficialPrices(
+    @Query('products') products?: string,
+    @Query('country') country?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.marketsService.getEuOfficialPrices({
+      products,
+      country,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
 }

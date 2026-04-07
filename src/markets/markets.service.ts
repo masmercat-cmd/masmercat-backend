@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import axios from 'axios';
 import { Repository } from 'typeorm';
 import { Market } from '../entities/market.entity';
 import { PriceHistory } from '../entities/price-history.entity';
@@ -7,6 +8,7 @@ import { Lot } from '../entities/lot.entity';
 
 interface ReferencePriceFilters {
   query?: string;
+  products?: string;
   country?: string;
   region?: string;
   source?: string;
@@ -16,6 +18,11 @@ interface ReferencePriceFilters {
 
 @Injectable()
 export class MarketsService {
+  private static readonly euBaseUrls = [
+    'https://agridata.ec.europa.eu',
+    'https://acceptance.agridata.ec.europa.eu',
+  ];
+
   private static readonly countryAliases: Record<string, string> = {
     spain: 'es',
     espana: 'es',
@@ -239,6 +246,88 @@ export class MarketsService {
     return values;
   }
 
+  async getEuOfficialPrices(filters: ReferencePriceFilters) {
+    const limit = Math.min(Math.max(filters.limit ?? 40, 1), 120);
+    const products = `${filters.products ?? ''}`
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item, index, list) => item.length > 0 && list.indexOf(item) === index);
+    const memberStateCode = `${filters.country ?? ''}`.trim().toUpperCase();
+
+    if (products.length === 0) {
+      return [];
+    }
+
+    const stages = [
+      '',
+      'Retail buying price',
+      'Ex-packaging station price',
+      'Retail selling price',
+      'Farmgate price',
+      'Wholesale price',
+      'Producer price',
+    ];
+    const countryFilters = memberStateCode ? [memberStateCode, ''] : [''];
+    const collected = new Map<string, any>();
+
+    for (const countryFilter of countryFilters) {
+      for (const product of products) {
+        for (const stage of stages) {
+          try {
+            const rows = await this.fetchEuAgriDataPrices(product, countryFilter, stage);
+            for (const row of rows) {
+              const normalized = this.normalizeEuOfficialMeasurement(
+                `${row?.price ?? ''}`,
+                `${row?.unit ?? ''}`,
+              );
+              if (!normalized) {
+                continue;
+              }
+
+              const mapped = {
+                fruitName: product,
+                marketName: `${row?.market ?? row?.memberStateName ?? ''}`.trim(),
+                country: `${row?.memberStateCode ?? ''}`.trim(),
+                city: `${row?.memberStateName ?? ''}`.trim(),
+                price: normalized.price,
+                currency: normalized.currency,
+                unitType: normalized.unitType,
+                productStage: `${row?.productStage ?? stage ?? ''}`.trim(),
+                source: 'EU AgriData',
+                sourceRegion: `${row?.memberStateCode ?? ''}`.trim(),
+                region: 'eu',
+                referenceDate: `${row?.endDate ?? row?.beginDate ?? ''}`.trim(),
+              };
+              const dedupeKey = [
+                mapped.fruitName,
+                mapped.marketName,
+                mapped.country,
+                mapped.productStage,
+                mapped.referenceDate,
+              ].join('|');
+              if (!collected.has(dedupeKey)) {
+                collected.set(dedupeKey, mapped);
+              }
+            }
+            if (collected.size >= limit) {
+              break;
+            }
+          } catch (_) {}
+        }
+        if (collected.size >= limit) {
+          break;
+        }
+      }
+      if (collected.size >= limit) {
+        break;
+      }
+    }
+
+    return Array.from(collected.values())
+      .sort((a, b) => this.parseEuropeanDate(b.referenceDate) - this.parseEuropeanDate(a.referenceDate))
+      .slice(0, limit);
+  }
+
   private async getMapFallbackFromLots(query: string) {
     const lots = await this.lotsRepository.find({
       relations: ['fruit', 'market'],
@@ -350,6 +439,84 @@ export class MarketsService {
       referenceDate: row.date,
       updatedAt: row.createdAt,
     };
+  }
+
+  private async fetchEuAgriDataPrices(
+    product: string,
+    memberStateCode?: string,
+    productStage?: string,
+  ): Promise<any[]> {
+    let lastError: unknown;
+
+    for (const baseUrl of MarketsService.euBaseUrls) {
+      try {
+        const response = await axios.get(
+          `${baseUrl}/api/fruitAndVegetable/pricesSupplyChain`,
+          {
+            timeout: 15000,
+            headers: { Accept: 'application/json' },
+            params: {
+              years: `${new Date().getFullYear() - 1},${new Date().getFullYear()}`,
+              products: product,
+              ...(memberStateCode ? { memberStateCodes: memberStateCode } : {}),
+              ...(productStage ? { productStages: productStage } : {}),
+            },
+          },
+        );
+
+        if (Array.isArray(response.data)) {
+          return response.data;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError ?? new Error('EU AgriData unavailable');
+  }
+
+  private normalizeEuOfficialMeasurement(rawPrice: string, rawUnit: string) {
+    const normalizedPrice = `${rawPrice ?? ''}`.replace(',', '.').trim();
+    const normalizedUnit = `${rawUnit ?? ''}`.toLowerCase().trim();
+    const parsedPrice = Number.parseFloat(normalizedPrice);
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      return null;
+    }
+
+    let price = parsedPrice;
+    let currency = rawPrice.includes('$') || rawUnit.includes('$') ? 'USD' : 'EUR';
+    let unitType = 'kg';
+
+    if (
+      normalizedUnit.includes('/100 kg') ||
+      normalizedUnit.includes('100kg') ||
+      normalizedUnit.includes('€/100 kg') ||
+      normalizedUnit.includes('euro/100 kg')
+    ) {
+      price = parsedPrice / 100;
+      unitType = 'kg';
+      currency = 'EUR';
+    } else if (normalizedUnit.includes('/kg') || normalizedUnit.endsWith('kg')) {
+      unitType = 'kg';
+    } else if (normalizedUnit.includes('box') || normalizedUnit.includes('caja')) {
+      unitType = 'box';
+    } else if (normalizedUnit.includes('pallet') || normalizedUnit.includes('palet')) {
+      unitType = 'pallet';
+    }
+
+    return { price, currency, unitType };
+  }
+
+  private parseEuropeanDate(value: string): number {
+    const parts = `${value ?? ''}`.split('/');
+    if (parts.length !== 3) {
+      return 0;
+    }
+
+    const day = Number.parseInt(parts[0], 10) || 1;
+    const month = Number.parseInt(parts[1], 10) || 1;
+    const year = Number.parseInt(parts[2], 10) || 1970;
+    return new Date(year, month - 1, day).getTime();
   }
 
   private matchesCountryFilter(row: PriceHistory, country?: string): boolean {
