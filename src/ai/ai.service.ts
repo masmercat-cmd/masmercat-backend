@@ -103,7 +103,7 @@ export class AiService {
 
   private extractGermanPostalCityEntries(raw: string): Array<{ start: number; end: number; city: string }> {
     const entries: Array<{ start: number; end: number; city: string }> = [];
-    const regex = /(\d{2})(?:\s*-\s*(\d{2}))?[.\s…-]+([A-Za-zÀ-ÿ\/\-\s]+?)(?=\s+\d{2}(?:\s*-\s*\d{2})?[.\s…-]+|$)/g;
+    const regex = /(\d{2})(?:\s*-\s*(\d{2}))?[.\s…-]+([A-Za-z\u00C0-\u017F\/\-\s]+?)(?=\s+\d{2}(?:\s*-\s*\d{2})?[.\s…-]+|$)/g;
     const compact = raw
       .replace(/\r/g, ' ')
       .replace(/\n/g, ' ')
@@ -1206,6 +1206,50 @@ Responda de maneira amigável, concisa e profissional em português.`,
 हिंदी में मित्रवत, संक्षिप्त और पेशेवर तरीके से जवाब दें।`,
   };
 
+  private buildNaraSystemPrompt(basePrompt: string, language: string): string {
+    const responseLanguage: Record<string, string> = {
+      es: 'Spanish',
+      en: 'English',
+      fr: 'French',
+      de: 'German',
+      pt: 'Portuguese',
+      ar: 'Arabic',
+      zh: 'Chinese',
+      hi: 'Hindi',
+    };
+
+    const finalLanguage = responseLanguage[language] || responseLanguage.es;
+
+    return `${basePrompt}
+
+Extra role for this conversation:
+- You are not a generic chatbot. You are Nara, a practical expert for fruit, quality, lots, pricing and commercial decisions.
+- Help the user work better, sell better, buy better and detect mistakes before they cost money.
+- Be brief, clear and operational.
+
+Priority tasks:
+- Analyze fruit or lot photos as an expert eye
+- Help with pricing, margin and transport decisions
+- Read lot data and detect inconsistencies
+- Give simple market guidance when relevant
+- Turn operational details into a clear commercial summary
+
+If the user shares a lot photo or lot data, prefer this response structure when relevant:
+1. Visual condition or estimated quality
+2. Detected signs, risks or possible damage
+3. Consistency check for boxes, weight, caliber, format or price
+4. Indicative selling comment, margin comment or market comment
+5. Recommended action
+
+Rules:
+- Do not invent facts that are not visible or not supported
+- If something is uncertain, say it clearly and mention confidence
+- If data looks inconsistent, say it clearly
+- Focus on decision support, control and business value
+
+Respond always in ${finalLanguage}.`;
+  }
+
   constructor(
     private configService: ConfigService,
     @InjectRepository(AiScanResult)
@@ -1233,7 +1277,10 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
       imageMimeType = 'image/jpeg',
       imageName = 'image.jpg',
     } = chatMessageDto;
-    const systemPrompt = this.systemPrompts[language] || this.systemPrompts.es;
+    const systemPrompt = this.buildNaraSystemPrompt(
+      this.systemPrompts[language] || this.systemPrompts.es,
+      language,
+    );
 
     try {
       const userContent = image
