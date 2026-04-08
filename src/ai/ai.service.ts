@@ -644,13 +644,22 @@ export class AiService {
       normalizedBoxesPerLayer > 0
         ? normalizedBoxesPerLayer * Math.max(normalizedLayers, 1)
         : 0;
+    const preferredStructuralBase = Math.max(byFrontAndDepth, byTopAndRows);
+    const fallbackStructuralBase = Math.max(structuralTotal, frontVisible);
+    const structuralBase =
+      preferredStructuralBase > 0
+        ? preferredStructuralBase
+        : fallbackStructuralBase;
 
-    let estimated = Math.max(
-      existingBoxes,
-      structuralTotal,
-      byFrontAndDepth,
-      byTopAndRows,
-    );
+    let estimated = structuralBase > 0 ? structuralBase : existingBoxes;
+
+    if (existingBoxes > 0 && structuralBase > 0) {
+      if (existingBoxes <= structuralBase * 1.2) {
+        estimated = Math.round((existingBoxes + structuralBase) / 2);
+      } else if (existingBoxes > structuralBase * 1.5) {
+        estimated = structuralBase;
+      }
+    }
 
     if (envase.includes('palet') && estimated === 0 && frontVisible > 0) {
       estimated = frontVisible;
@@ -668,9 +677,17 @@ export class AiService {
         visibleRows > 0 &&
         estimatedDepth > 0
       ) {
-        estimated = Math.max(
+        estimated = Math.min(
+          Math.max(
+            estimated,
+            visibleColumns * visibleRows * estimatedDepth,
+          ),
+          boxMeasures.includes('60x40') ? 180 : 220,
+        );
+      } else if (!likelyIndustrial) {
+        estimated = Math.min(
           estimated,
-          visibleColumns * visibleRows * estimatedDepth,
+          boxMeasures.includes('60x40') ? 140 : 180,
         );
       }
     }
@@ -895,10 +912,12 @@ Rules:
 - Use the top face to infer how many boxes fit in one full layer.
 - Compute cajas_por_capa = columnas_visibles x profundidad_estimada.
 - Compute cajas_estimadas = columnas_visibles x filas_visibles x profundidad_estimada.
+- Prioritize the front face and the visible side over generic volume guesses.
 - If the top suggests 3 columns by 5 deep and the front is 6 high, the total should be close to 90.
 - Do NOT return only front-visible boxes.
 - In a dense commercial pallet, assume hidden rear boxes exist.
 - Prefer a coherent 3D pallet structure over a low visual-only count.
+- Avoid unrealistic totals such as 300-400 boxes for one normal fruit pallet unless that amount is clearly visible and structurally possible.
 - Distinguish industrial pallet vs europallet from footprint and boxes per layer.`
         : `Estás revisando una imagen de palet de fruta porque la primera estimación puede estar contando pocas cajas.
 
@@ -918,7 +937,8 @@ Devuelve SOLO JSON válido con:
 
 Reglas:
 - Cuenta primero la cara frontal visible.
-- Infiere la profundidad total del palet y las capas completas.
+- Infiere la profundidad total del palet usando lo que se vea en el lateral y arriba.
+- Prioriza la cara frontal y el lateral visible por encima de estimaciones genéricas de volumen.
 - NO devuelvas solo las cajas visibles de frente.
 - Si el palet es alto y está muy lleno, prioriza el total comercial completo.
 - Distingue europalet y palet industrial por huella y cajas por capa.
@@ -1442,6 +1462,11 @@ Identifica:
 
 5. Si el envase es "palet con cajas", analiza así:
 - SIEMPRE estima el total del palet completo, no solo lo visible de frente
+- Cuenta como lo haría una persona mirando la foto:
+  1) columnas visibles delante
+  2) filas visibles en altura
+  3) profundidad visible en el lateral
+  4) multiplica frente x profundidad
 - Si hay varias capas en profundidad, multiplícalas
 - Si hay cajas encima, súmalas aparte
 - Si dudas entre varios valores, elige el MAYOR coherente
@@ -1460,6 +1485,11 @@ Debes calcular SIEMPRE con fórmula:
 - cajas_frente = columnas × filas
 - profundidad = número de filas hacia atrás (mínimo 1)
 - cajas_totales = cajas_frente × profundidad
+
+Ejemplo humano:
+- si delante ves 8 columnas x 5 filas = 40
+- y en el lateral se aprecian 4 cajas de profundidad
+- el total debe quedar cerca de 160, no 300 ni 400
 
 IMPORTANTE:
 - NO devuelvas solo las cajas visibles de frente
@@ -1575,10 +1605,16 @@ IMPORTANT:
 - Never return "por confirmar".
 - Always give an approximate value even if uncertain.
 - Estimate box count structurally, not loosely.
+- Count as a human operator would:
+  1) front columns
+  2) front rows in height
+  3) side depth
+  4) total = front face x depth
 - Use visible rows and columns on the front and side faces to infer total boxes.
 - Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
 - If the pallet is full height and densely stacked, avoid low counts.
 - Prefer realistic commercial pallet counts for fruit boxes.
+- If the visible structure suggests around 160 boxes, do not jump to 300-400 without clear visual proof.
 	- If the image only shows loose fruit or a single fruit without packaging, return packaging as "without box", set cajas_estimadas to 0 and set cantidad_total_piezas to the visible fruit count.
 	- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
 - Do not count only the front-visible boxes.
