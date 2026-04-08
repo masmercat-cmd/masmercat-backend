@@ -780,6 +780,25 @@ export class AiService {
     return 18;
   }
 
+  private inferPalletCount(parsed: any, envase: string): number {
+    if (!envase.includes('palet') && !envase.includes('palot')) {
+      return 0;
+    }
+
+    const explicitCount = Math.max(
+      this.toNumber(parsed.numero_palets),
+      this.toNumber(parsed.pallet_count),
+      this.toNumber(parsed.palets_visibles),
+      this.toNumber(parsed.pallets_visible),
+    );
+
+    if (explicitCount > 0) {
+      return Math.max(1, Math.round(explicitCount));
+    }
+
+    return 1;
+  }
+
   private finalizeVisionResult(parsed: any): any {
     let envase = this.normalizeEnvase(parsed.envase);
     const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
@@ -797,6 +816,7 @@ export class AiService {
 
     const boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
+    const palletCount = this.inferPalletCount(parsed, envase);
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
     const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
@@ -838,9 +858,9 @@ export class AiService {
     }
 
     const tareWeight = isPalot
-      ? palletTareKg
+      ? palletTareKg * Math.max(1, palletCount)
       : envase.includes('palet')
-        ? palletTareKg
+        ? palletTareKg * Math.max(1, palletCount)
         : Number((boxes * tarePerBoxKg).toFixed(2));
 
     parsed.peso_bruto_kg = Number(grossWeight.toFixed(2));
@@ -867,8 +887,7 @@ export class AiService {
       }
     }
 
-    parsed.numero_palets =
-      envase.includes('palet') || envase.includes('palot') ? 1 : 0;
+    parsed.numero_palets = palletCount;
 
     if (
       envase.includes('palet') &&
@@ -893,6 +912,7 @@ export class AiService {
 
 Return ONLY valid JSON with:
 {
+  "numero_palets": 1,
   "columnas_visibles": 0,
   "filas_visibles": 0,
   "profundidad_estimada": 0,
@@ -906,6 +926,7 @@ Return ONLY valid JSON with:
 }
 
 Rules:
+- First count how many pallets are visible.
 - Count the number of full front columns.
 - Count the number of full front rows in height.
 - Estimate depth from the visible side and top faces.
@@ -923,6 +944,7 @@ Rules:
 
 Devuelve SOLO JSON válido con:
 {
+  "numero_palets": 1,
   "columnas_visibles": 0,
   "filas_visibles": 0,
   "profundidad_estimada": 0,
@@ -936,6 +958,7 @@ Devuelve SOLO JSON válido con:
 }
 
 Reglas:
+- Cuenta primero cuántos palets hay visibles.
 - Cuenta primero la cara frontal visible.
 - Infiere la profundidad total del palet usando lo que se vea en el lateral y arriba.
 - Prioriza la cara frontal y el lateral visible por encima de estimaciones genéricas de volumen.
@@ -1467,6 +1490,8 @@ Identifica:
   2) filas visibles en altura
   3) profundidad visible en el lateral
   4) multiplica frente x profundidad
+- Si en la foto aparecen varios palets, cuenta cuántos palets completos o casi completos hay
+- En ese caso, "numero_palets" debe ser el total de palets visibles y "cajas_estimadas" debe ser la suma de todos los palets, no solo uno
 - Si hay varias capas en profundidad, multiplícalas
 - Si hay cajas encima, súmalas aparte
 - Si dudas entre varios valores, elige el MAYOR coherente
@@ -1578,6 +1603,7 @@ Identify:
  - infer hidden boxes from pallet depth and width
  - determine whether it is half pallet, europallet (120x80), or industrial pallet (120x100)
  - if the pallet is full and densely stacked, prefer a realistic commercial total instead of a low visual-only count
+ - if several pallets are visible, count them and return the total box count for all visible pallets
 4. Estimate pieces per box
 5. Estimated total weight in kg
 6. Quality (extra, first, second)
@@ -1596,7 +1622,8 @@ Respond ONLY in JSON with these keys:
   "calidad": "extra/first/second",
   "envase": "box / pallet with boxes",
   "medidas_caja": "60x40 cm approx",
-  "medidas_palet": "120x100 cm approx"
+  "medidas_palet": "120x100 cm approx",
+  "numero_palets": 1
 }
 
 IMPORTANT:
@@ -1610,6 +1637,7 @@ IMPORTANT:
   2) front rows in height
   3) side depth
   4) total = front face x depth
+- If more than one pallet is visible, count the pallets first and then return the total number of boxes across all pallets.
 - Use visible rows and columns on the front and side faces to infer total boxes.
 - Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
 - If the pallet is full height and densely stacked, avoid low counts.
