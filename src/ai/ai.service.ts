@@ -838,10 +838,48 @@ export class AiService {
       this.toNumber(parsed.pallet_count),
       this.toNumber(parsed.palets_visibles),
       this.toNumber(parsed.pallets_visible),
+      this.toNumber(parsed.palets_estimados),
+      this.toNumber(parsed.pallets_estimated),
+      this.toNumber(parsed.palets_detectados),
+      this.toNumber(parsed.pallets_detected),
+      this.toNumber(parsed.grupos_palets),
+      this.toNumber(parsed.bloques_palets),
     );
 
     if (explicitCount > 0) {
       return Math.max(1, Math.round(explicitCount));
+    }
+
+    const totalBoxes = Math.max(
+      this.toNumber(parsed.cajas_estimadas),
+      this.toNumber(parsed.cajas_aprox),
+    );
+    const visibleRows = this.toNumber(parsed.filas_visibles);
+    const visibleColumns = this.toNumber(parsed.columnas_visibles);
+    const topBoxes = this.toNumber(parsed.cajas_superiores);
+    const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+    const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+
+    const likelyTopView =
+      visibleRows > 0 &&
+      visibleRows <= 3 &&
+      topBoxes > 0 &&
+      totalBoxes >= 90;
+    const likelyWarehouseMultiPallet =
+      likelyTopView ||
+      (visibleRows <= 2 && visibleColumns <= 4 && totalBoxes >= 140) ||
+      (topBoxes >= 18 && totalBoxes >= 120);
+
+    if (likelyWarehouseMultiPallet) {
+      const conservativeSinglePalletCapacity = likelyIndustrial ? 100 : 80;
+      const inferredByBoxes = Math.max(
+        1,
+        Math.ceil(totalBoxes / conservativeSinglePalletCapacity),
+      );
+
+      return this.clamp(inferredByBoxes, 1, 24);
     }
 
     return 1;
