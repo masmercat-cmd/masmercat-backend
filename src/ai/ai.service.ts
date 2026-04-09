@@ -884,7 +884,16 @@ export class AiService {
         1,
         Math.ceil(totalBoxes / conservativeSinglePalletCapacity),
       );
-      const inferred = Math.max(explicitOrGridCount, inferredByBoxes);
+      const likelyHalfGridUndercount =
+        explicitOrGridCount >= 6 &&
+        explicitOrGridCount <= 12 &&
+        totalBoxes >= 120 &&
+        visibleRows <= 2;
+      const inferred = Math.max(
+        explicitOrGridCount,
+        inferredByBoxes,
+        likelyHalfGridUndercount ? explicitOrGridCount * 2 : 0,
+      );
       return this.clamp(inferred, 1, 24);
     }
 
