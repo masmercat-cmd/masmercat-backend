@@ -670,6 +670,7 @@ export class AiService {
       const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
       const likelyIndustrial =
         palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+      const palletCount = Math.max(1, this.inferPalletCount(parsed, envase));
 
       if (
         likelyIndustrial &&
@@ -689,6 +690,33 @@ export class AiService {
           estimated,
           boxMeasures.includes('60x40') ? 140 : 180,
         );
+      }
+
+      if (
+        boxMeasures.includes('60x40') &&
+        visibleRows >= 8 &&
+        palletCount >= 1
+      ) {
+        const candidateLayerCounts = likelyIndustrial ? [4, 5, 6] : [3, 4, 5];
+        const perPalletEstimate = estimated > 0 ? estimated / palletCount : 0;
+        const nearestCommercialPerPallet = candidateLayerCounts
+          .map((boxesPerLayer) => boxesPerLayer * visibleRows)
+          .reduce((best, candidate) => {
+            if (best === 0) return candidate;
+            return Math.abs(candidate - perPalletEstimate) <
+              Math.abs(best - perPalletEstimate)
+              ? candidate
+              : best;
+          }, 0);
+
+        if (
+          nearestCommercialPerPallet > 0 &&
+          perPalletEstimate > 0 &&
+          (perPalletEstimate > nearestCommercialPerPallet * 1.35 ||
+            perPalletEstimate < nearestCommercialPerPallet * 0.65)
+        ) {
+          estimated = nearestCommercialPerPallet * palletCount;
+        }
       }
     }
 
@@ -851,10 +879,15 @@ export class AiService {
       grossWeight = Math.max(aiGrossWeight, 280);
     } else if (boxes > 0) {
       const estimatedGross = boxes * boxWeightKg;
-      grossWeight =
-        aiGrossWeight > 0
-          ? Number(((aiGrossWeight + estimatedGross) / 2).toFixed(2))
-          : Number(estimatedGross.toFixed(2));
+      if (aiGrossWeight > 0) {
+        const ratio = estimatedGross > 0 ? aiGrossWeight / estimatedGross : 1;
+        grossWeight =
+          ratio < 0.6 || ratio > 1.4
+            ? Number(estimatedGross.toFixed(2))
+            : Number(((aiGrossWeight + estimatedGross) / 2).toFixed(2));
+      } else {
+        grossWeight = Number(estimatedGross.toFixed(2));
+      }
     }
 
     const tareWeight = isPalot
@@ -1021,6 +1054,9 @@ Reglas:
     const profundidad = this.toNumber(parsed?.profundidad_estimada);
     const capas = this.toNumber(parsed?.capas_estimadas);
     const cajasPorCapa = this.toNumber(parsed?.cajas_por_capa);
+    const columnas = this.toNumber(parsed?.columnas_visibles);
+    const filas = this.toNumber(parsed?.filas_visibles);
+    const frontal = columnas > 0 && filas > 0 ? columnas * filas : 0;
 
     if (confianza.includes('baja') || confianza.includes('low')) {
       return true;
@@ -1032,6 +1068,13 @@ Reglas:
 
     if (cajas <= 96 && (profundidad <= 1 || capas <= 1 || cajasPorCapa <= 0)) {
       return true;
+    }
+
+    if (frontal > 0 && cajas > 0) {
+      const ratio = cajas / frontal;
+      if (ratio >= 3.5 || ratio <= 1) {
+        return true;
+      }
     }
 
     return false;
