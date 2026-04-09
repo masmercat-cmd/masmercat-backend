@@ -739,6 +739,29 @@ export class AiService {
   private inferBoxWeightKg(parsed: any, producto: string): number {
     const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
     const envase = this.normalizeEnvase(parsed?.envase);
+    const isCommercialBox = envase.includes('palet') || envase.includes('caja');
+
+    const defaultWeights: Record<string, number> = {
+      aguacate: 4,
+      berenjena: 5,
+      cereza: 2.5,
+      fresa: 2,
+      kiwi: 3.2,
+      limon: 6,
+      mandarina: 7,
+      manzana: 8,
+      melocoton: 7,
+      melon: 10,
+      naranja: 8,
+      nectarina: 7,
+      paraguayo: 6,
+      pera: 8,
+      pimiento: 5,
+      platano: 18,
+      sandia: 18,
+      tomate: 6,
+      uva: 4.5,
+    };
 
     const avgPieceWeights: Record<string, number> = {
       aguacate: 0.22,
@@ -767,34 +790,21 @@ export class AiService {
     };
 
     if (piecesPerBox > 0 && avgPieceWeights[producto]) {
-      return this.clamp(piecesPerBox * avgPieceWeights[producto], 2.5, 22);
+      const estimatedByPieces = this.clamp(
+        piecesPerBox * avgPieceWeights[producto],
+        2.5,
+        22,
+      );
+      if (isCommercialBox) {
+        const defaultCommercial = defaultWeights[producto] ?? 6.5;
+        return Math.max(estimatedByPieces, defaultCommercial, 7.5);
+      }
+      return estimatedByPieces;
     }
-
-    const defaultWeights: Record<string, number> = {
-      aguacate: 4,
-      berenjena: 5,
-      cereza: 2.5,
-      fresa: 2,
-      kiwi: 3.2,
-      limon: 6,
-      mandarina: 7,
-      manzana: 8,
-      melocoton: 7,
-      melon: 10,
-      naranja: 8,
-      nectarina: 7,
-      paraguayo: 6,
-      pera: 8,
-      pimiento: 5,
-      platano: 18,
-      sandia: 18,
-      tomate: 6,
-      uva: 4.5,
-    };
 
     const inferred = defaultWeights[producto] ?? 6.5;
 
-    if (envase.includes('palet') || envase.includes('caja')) {
+    if (isCommercialBox) {
       return Math.max(inferred, 7.5);
     }
 
