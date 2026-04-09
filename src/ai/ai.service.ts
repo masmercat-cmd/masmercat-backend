@@ -912,6 +912,11 @@ export class AiService {
         explicitOrGridCount >= 8 &&
         explicitOrGridCount <= 12 &&
         visibleRows <= 3;
+      const likelyQuarterVisibleGrid =
+        explicitOrGridCount >= 5 &&
+        explicitOrGridCount <= 8 &&
+        visibleRows <= 3 &&
+        totalBoxes >= 90;
       const inferred = Math.max(
         explicitOrGridCount,
         inferredByBoxes,
@@ -919,6 +924,7 @@ export class AiService {
         likelyDoubleBlockWarehouse ? explicitOrGridCount * 2 : 0,
         likelyQuarteredWarehouseView ? explicitOrGridCount * 2 : 0,
         likelyHalfVisibleGrid ? explicitOrGridCount * 2 : 0,
+        likelyQuarterVisibleGrid ? explicitOrGridCount * 4 : 0,
       );
       return this.clamp(inferred, 1, 24);
     }
