@@ -877,12 +877,12 @@ export class AiService {
       visibleRows <= 3 &&
       topBoxes > 0 &&
       totalBoxes >= 90;
+    const explicitOrGridCount = Math.max(explicitCount, palletGridCount);
     const likelyWarehouseMultiPallet =
       likelyTopView ||
       (visibleRows <= 2 && visibleColumns <= 4 && totalBoxes >= 140) ||
-      (topBoxes >= 18 && totalBoxes >= 120);
-
-    const explicitOrGridCount = Math.max(explicitCount, palletGridCount);
+      (topBoxes >= 18 && totalBoxes >= 120) ||
+      (explicitOrGridCount >= 8 && visibleRows <= 3);
 
     if (explicitOrGridCount > 0 && !likelyWarehouseMultiPallet) {
       return Math.max(1, Math.round(explicitOrGridCount));
@@ -908,12 +908,17 @@ export class AiService {
         explicitOrGridCount <= 14 &&
         topBoxes >= 12 &&
         visibleRows <= 3;
+      const likelyHalfVisibleGrid =
+        explicitOrGridCount >= 8 &&
+        explicitOrGridCount <= 12 &&
+        visibleRows <= 3;
       const inferred = Math.max(
         explicitOrGridCount,
         inferredByBoxes,
         likelyHalfGridUndercount ? explicitOrGridCount * 2 : 0,
         likelyDoubleBlockWarehouse ? explicitOrGridCount * 2 : 0,
         likelyQuarteredWarehouseView ? explicitOrGridCount * 2 : 0,
+        likelyHalfVisibleGrid ? explicitOrGridCount * 2 : 0,
       );
       return this.clamp(inferred, 1, 24);
     }
