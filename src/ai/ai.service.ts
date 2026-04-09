@@ -903,11 +903,17 @@ export class AiService {
         explicitOrGridCount >= 10 &&
         explicitOrGridCount <= 14 &&
         topBoxes >= 20;
+      const likelyQuarteredWarehouseView =
+        explicitOrGridCount >= 7 &&
+        explicitOrGridCount <= 14 &&
+        topBoxes >= 12 &&
+        visibleRows <= 3;
       const inferred = Math.max(
         explicitOrGridCount,
         inferredByBoxes,
         likelyHalfGridUndercount ? explicitOrGridCount * 2 : 0,
         likelyDoubleBlockWarehouse ? explicitOrGridCount * 2 : 0,
+        likelyQuarteredWarehouseView ? explicitOrGridCount * 2 : 0,
       );
       return this.clamp(inferred, 1, 24);
     }
@@ -945,7 +951,14 @@ export class AiService {
       const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
       const likelyIndustrial =
         palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
-      const minimumBoxesPerPallet = likelyIndustrial ? 10 : 8;
+      const minimumBoxesPerPallet =
+        palletCount >= 12
+          ? likelyIndustrial
+            ? 12
+            : 10
+          : likelyIndustrial
+            ? 10
+            : 8;
       boxes = Math.max(boxes, palletCount * minimumBoxesPerPallet);
     }
 
