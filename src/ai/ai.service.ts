@@ -844,11 +844,11 @@ export class AiService {
       this.toNumber(parsed.pallets_detected),
       this.toNumber(parsed.grupos_palets),
       this.toNumber(parsed.bloques_palets),
+      this.toNumber(parsed.bloques_palets_visibles),
     );
-
-    if (explicitCount > 0) {
-      return Math.max(1, Math.round(explicitCount));
-    }
+    const palletGridCount =
+      Math.max(1, this.toNumber(parsed.columnas_palets_visibles)) *
+      Math.max(1, this.toNumber(parsed.filas_palets_visibles));
 
     const totalBoxes = Math.max(
       this.toNumber(parsed.cajas_estimadas),
@@ -872,17 +872,23 @@ export class AiService {
       (visibleRows <= 2 && visibleColumns <= 4 && totalBoxes >= 140) ||
       (topBoxes >= 18 && totalBoxes >= 120);
 
+    const explicitOrGridCount = Math.max(explicitCount, palletGridCount);
+
+    if (explicitOrGridCount > 0 && !likelyWarehouseMultiPallet) {
+      return Math.max(1, Math.round(explicitOrGridCount));
+    }
+
     if (likelyWarehouseMultiPallet) {
       const conservativeSinglePalletCapacity = likelyIndustrial ? 100 : 80;
       const inferredByBoxes = Math.max(
         1,
         Math.ceil(totalBoxes / conservativeSinglePalletCapacity),
       );
-
-      return this.clamp(inferredByBoxes, 1, 24);
+      const inferred = Math.max(explicitOrGridCount, inferredByBoxes);
+      return this.clamp(inferred, 1, 24);
     }
 
-    return 1;
+    return explicitOrGridCount > 0 ? Math.max(1, Math.round(explicitOrGridCount)) : 1;
   }
 
   private finalizeVisionResult(parsed: any): any {
@@ -1672,6 +1678,12 @@ Identifica:
   4) multiplica frente x profundidad
 - Si en la foto aparecen varios palets, cuenta cuántos palets completos o casi completos hay
 - En ese caso, "numero_palets" debe ser el total de palets visibles y "cajas_estimadas" debe ser la suma de todos los palets, no solo uno
+- Si la foto es desde arriba, diagonal o de almacén, cuenta huellas o bloques de palet visibles en el suelo
+- En esas vistas, estima también:
+  - "columnas_palets_visibles" = cuántos palets o bloques ves a lo ancho
+  - "filas_palets_visibles" = cuántos palets o bloques ves hacia el fondo
+  - "bloques_palets_visibles" = total de palets visibles si la cuadrícula no es perfecta
+- No agrupes varios palets cercanos como si fueran un solo palet
 - Si hay varias capas en profundidad, multiplícalas
 - Si hay cajas encima, súmalas aparte
 - Si dudas entre varios valores, elige el MAYOR coherente
@@ -1756,6 +1768,9 @@ Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
   "cajas_aprox": 0,
   "cajas_superiores": 0,
   "cajas_estimadas": 0,
+  "columnas_palets_visibles": 0,
+  "filas_palets_visibles": 0,
+  "bloques_palets_visibles": 0,
   "piezas_por_caja": 0,
   "cantidad_total_piezas": 0,
   "cantidad_aprox": 0,
@@ -1783,7 +1798,13 @@ Identify:
  - infer hidden boxes from pallet depth and width
  - determine whether it is half pallet, europallet (120x80), or industrial pallet (120x100)
  - if the pallet is full and densely stacked, prefer a realistic commercial total instead of a low visual-only count
- - if several pallets are visible, count them and return the total box count for all visible pallets
+- if several pallets are visible, count them and return the total box count for all visible pallets
+- if the image is top-down, diagonal, or warehouse-style, count pallet footprints or distinct pallet blocks on the floor
+- in those views also estimate:
+  - "columnas_palets_visibles" = pallets across
+  - "filas_palets_visibles" = pallets deep
+  - "bloques_palets_visibles" = total visible pallet blocks when the grid is irregular
+- do not merge nearby pallets into one pallet
 4. Estimate pieces per box
 5. Estimated total weight in kg
 6. Quality (extra, first, second)
@@ -1796,6 +1817,9 @@ Respond ONLY in JSON with these keys:
    "fruta": "orange/lemon/etc",
   "calibre": "1/2/3/A/B",
   "cajas_estimadas": 184,
+  "columnas_palets_visibles": 0,
+  "filas_palets_visibles": 0,
+  "bloques_palets_visibles": 0,
   "piezas_por_caja": 20,
   "cantidad_total_piezas": 3680,
   "peso_estimado_kg": 920,
@@ -1818,6 +1842,7 @@ IMPORTANT:
   3) side depth
   4) total = front face x depth
 - If more than one pallet is visible, count the pallets first and then return the total number of boxes across all pallets.
+- For top-down or warehouse views, count pallet footprints on the floor before estimating boxes.
 - Use visible rows and columns on the front and side faces to infer total boxes.
 - Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
 - If the pallet is full height and densely stacked, avoid low counts.
