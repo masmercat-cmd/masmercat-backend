@@ -1250,6 +1250,34 @@ Rules:
 Respond always in ${finalLanguage}.`;
   }
 
+  private buildNaraImageInstruction(language: string): string {
+    const responseLanguage: Record<string, string> = {
+      es: 'Spanish',
+      en: 'English',
+      fr: 'French',
+      de: 'German',
+      pt: 'Portuguese',
+      ar: 'Arabic',
+      zh: 'Chinese',
+      hi: 'Hindi',
+    };
+
+    const finalLanguage = responseLanguage[language] || responseLanguage.es;
+
+    return `This request includes an image.
+
+For image-based answers:
+- Start from what is actually visible in the image, not from generic assumptions.
+- Mention visible structure, pallet format, stacking, packaging, labels and external condition when relevant.
+- Do not claim internal fruit quality, exact caliber, exact weight or market demand unless the image or provided data truly support it.
+- If the exact product is not fully clear from the image, say it is probable or not fully confirmed.
+- Do not add market-price commentary unless the user provided price, market data or calculator context.
+- If the user asks about inconsistencies, point to specific visible clues.
+- Prefer concrete observations over generic advice.
+
+Respond always in ${finalLanguage}.`;
+  }
+
   constructor(
     private configService: ConfigService,
     @InjectRepository(AiScanResult)
@@ -1283,6 +1311,10 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
     );
 
     try {
+      const effectiveSystemPrompt = image
+        ? `${systemPrompt}\n\n${this.buildNaraImageInstruction(language)}`
+        : systemPrompt;
+
       const userContent = image
         ? [
             {
@@ -1301,10 +1333,10 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
       const completion = await this.openai.chat.completions.create({
         model: 'gpt-4o', // más estable y actual para chat
         messages: [
-          { role: 'system', content: systemPrompt },
+          { role: 'system', content: effectiveSystemPrompt },
           { role: 'user', content: userContent },
         ],
-        temperature: 0.7,
+        temperature: image ? 0.2 : 0.7,
         max_tokens: 500,
       });
 
