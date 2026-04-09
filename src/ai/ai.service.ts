@@ -671,6 +671,19 @@ export class AiService {
       const likelyIndustrial =
         palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
       const palletCount = Math.max(1, this.inferPalletCount(parsed, envase));
+      const frontOnlyView =
+        visibleColumns > 0 &&
+        visibleRows > 0 &&
+        estimatedDepth <= 1 &&
+        topBoxes <= 0 &&
+        boxesPerLayer <= 0;
+
+      if (frontOnlyView) {
+        estimated = Math.min(
+          estimated > 0 ? estimated : frontVisible,
+          Math.max(frontVisible, frontVisible + Math.ceil(visibleColumns / 3)),
+        );
+      }
 
       if (
         likelyIndustrial &&
@@ -725,6 +738,7 @@ export class AiService {
 
   private inferBoxWeightKg(parsed: any, producto: string): number {
     const piecesPerBox = this.toNumber(parsed.piezas_por_caja);
+    const envase = this.normalizeEnvase(parsed?.envase);
 
     const avgPieceWeights: Record<string, number> = {
       aguacate: 0.22,
@@ -778,7 +792,13 @@ export class AiService {
       uva: 4.5,
     };
 
-    return defaultWeights[producto] ?? 6.5;
+    const inferred = defaultWeights[producto] ?? 6.5;
+
+    if (envase.includes('palet') || envase.includes('caja')) {
+      return Math.max(inferred, 7.5);
+    }
+
+    return inferred;
   }
 
   private inferTarePerBoxKg(parsed: any): number {
