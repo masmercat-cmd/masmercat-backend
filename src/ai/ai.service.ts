@@ -897,12 +897,17 @@ export class AiService {
       const likelyHalfGridUndercount =
         explicitOrGridCount >= 6 &&
         explicitOrGridCount <= 12 &&
-        totalBoxes >= 120 &&
-        visibleRows <= 2;
+        totalBoxes >= 100 &&
+        (visibleRows <= 3 || topBoxes >= 18);
+      const likelyDoubleBlockWarehouse =
+        explicitOrGridCount >= 10 &&
+        explicitOrGridCount <= 14 &&
+        topBoxes >= 20;
       const inferred = Math.max(
         explicitOrGridCount,
         inferredByBoxes,
         likelyHalfGridUndercount ? explicitOrGridCount * 2 : 0,
+        likelyDoubleBlockWarehouse ? explicitOrGridCount * 2 : 0,
       );
       return this.clamp(inferred, 1, 24);
     }
@@ -925,7 +930,7 @@ export class AiService {
       parsed.envase = 'sin caja';
     }
 
-    const boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
+    let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
     const palletCount = this.inferPalletCount(parsed, envase);
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
@@ -934,6 +939,15 @@ export class AiService {
     const aiGrossWeight = this.toNumber(
       parsed.peso_bruto_kg ?? parsed.peso_estimado_kg,
     );
+
+    if (envase.includes('palet') && palletCount >= 8) {
+      const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+      const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+      const likelyIndustrial =
+        palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+      const minimumBoxesPerPallet = likelyIndustrial ? 10 : 8;
+      boxes = Math.max(boxes, palletCount * minimumBoxesPerPallet);
+    }
 
     parsed.cajas_estimadas = boxes;
     parsed.cajas_aprox = boxes;
