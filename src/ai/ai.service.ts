@@ -340,6 +340,7 @@ export class AiService {
   }
 
   private mapSavedScanResult(saved: AiScanResult): Record<string, any> {
+    const resultado = saved.resultadoAi ?? {};
     return {
       image_path: saved.imagePath,
       image_hash: saved.imageHash,
@@ -355,11 +356,15 @@ export class AiService {
       peso_bruto_kg: saved.pesoBrutoKg,
       peso_estimado_kg: saved.pesoBrutoKg,
       peso_neto_kg: saved.pesoNetoKg,
-      resultado_ai: saved.resultadoAi,
-      result: saved.resultadoAi,
+      numero_palets:
+        this.toNumber(resultado.numero_palets ?? resultado.pallet_count) || 1,
+      pallet_count:
+        this.toNumber(resultado.pallet_count ?? resultado.numero_palets) || 1,
+      resultado_ai: resultado,
+      result: resultado,
       corregido_usuario: true,
       updatedAt: saved.updatedAt,
-      ...(saved.resultadoAi ?? {}),
+      ...resultado,
     };
   }
 
@@ -389,6 +394,9 @@ export class AiService {
     const profundidad = this.toNumber(source.profundidad_estimada);
     const porCapa = this.toNumber(source.cajas_por_capa);
     const superiores = this.toNumber(source.cajas_superiores);
+    const palletCount = this.toNumber(
+      source.numero_palets ?? source.pallet_count ?? scan?.palletCount,
+    );
 
     return {
       producto,
@@ -400,6 +408,7 @@ export class AiService {
       profundidad,
       porCapa,
       superiores,
+      palletCount,
       cajas: this.toNumber(scan?.cajasAprox ?? source.cajas_estimadas ?? source.cajas_aprox),
       piezasPorCaja: this.toNumber(
         scan?.piezasPorCaja ?? source.piezas_por_caja,
@@ -469,6 +478,7 @@ export class AiService {
       [baseline.profundidad, candidate.profundidad, 3],
       [baseline.porCapa, candidate.porCapa, 3],
       [baseline.superiores, candidate.superiores, 1],
+      [baseline.palletCount, candidate.palletCount, 4],
     ];
 
     for (const [a, b, weight] of numericPairs) {
@@ -539,6 +549,11 @@ export class AiService {
     if (learnedPattern.cajas > 0) {
       corrected.cajas_estimadas = learnedPattern.cajas;
       corrected.cajas_aprox = learnedPattern.cajas;
+    }
+
+    if (learnedPattern.palletCount > 0) {
+      corrected.numero_palets = Math.round(learnedPattern.palletCount);
+      corrected.pallet_count = Math.round(learnedPattern.palletCount);
     }
 
     if (learnedPattern.piezasPorCaja > 0) {
