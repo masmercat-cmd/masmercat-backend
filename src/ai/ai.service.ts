@@ -1010,27 +1010,38 @@ export class AiService {
       parsed.cantidad_aprox = totalPieces;
     }
 
-    let grossWeight = aiGrossWeight;
-    if (isPalot) {
-      grossWeight = Math.max(aiGrossWeight, 280);
-    } else if (boxes > 0) {
-      const estimatedGross = boxes * boxWeightKg;
-      if (aiGrossWeight > 0) {
-        const ratio = estimatedGross > 0 ? aiGrossWeight / estimatedGross : 1;
-        grossWeight =
-          ratio < 0.6 || ratio > 1.4
-            ? Number(estimatedGross.toFixed(2))
-            : Number(((aiGrossWeight + estimatedGross) / 2).toFixed(2));
-      } else {
-        grossWeight = Number(estimatedGross.toFixed(2));
-      }
-    }
-
     const tareWeight = isPalot
       ? palletTareKg * Math.max(1, palletCount)
       : envase.includes('palet')
         ? palletTareKg * Math.max(1, palletCount)
         : Number((boxes * tarePerBoxKg).toFixed(2));
+
+    let netProductWeight = aiGrossWeight;
+    if (isPalot) {
+      netProductWeight = Math.max(aiGrossWeight, 280);
+    } else if (boxes > 0) {
+      const estimatedNet = boxes * boxWeightKg;
+      if (aiGrossWeight > 0) {
+        const estimatedGrossWithTare = estimatedNet + tareWeight;
+        const ratio =
+          estimatedGrossWithTare > 0 ? aiGrossWeight / estimatedGrossWithTare : 1;
+        netProductWeight =
+          ratio < 0.6 || ratio > 1.4
+            ? Number(estimatedNet.toFixed(2))
+            : Number(
+                Math.max(
+                  estimatedNet,
+                  aiGrossWeight - tareWeight,
+                ).toFixed(2),
+              );
+      } else {
+        netProductWeight = Number(estimatedNet.toFixed(2));
+      }
+    }
+
+    const grossWeight = Number(
+      Math.max(netProductWeight + tareWeight, aiGrossWeight).toFixed(2),
+    );
 
     parsed.peso_bruto_kg = Number(grossWeight.toFixed(2));
     parsed.peso_estimado_kg = Number(grossWeight.toFixed(2));
