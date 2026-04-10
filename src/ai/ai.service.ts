@@ -1216,6 +1216,133 @@ Reglas:
     return false;
   }
 
+  private shouldRunZoneRecount(parsed: any): boolean {
+    const envase = this.normalizeEnvase(parsed?.envase);
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const explicitPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+          this.toNumber(parsed?.filas_palets_visibles),
+    );
+
+    return (
+      totalBoxes >= 90 &&
+      (topBoxes >= 12 || visibleRows <= 3 || explicitPallets >= 4)
+    );
+  }
+
+  private async zoneRecountPallets(img: string, parsed: any): Promise<any> {
+    const prompt = `You are reviewing a warehouse or top-view fruit pallet image.
+
+Count pallet footprints by scanning the image in zones:
+- upper half
+- lower half
+- left half
+- right half
+- top-left quadrant
+- top-right quadrant
+- bottom-left quadrant
+- bottom-right quadrant
+
+Return ONLY valid JSON:
+{
+  "palets_mitad_superior": 0,
+  "palets_mitad_inferior": 0,
+  "palets_mitad_izquierda": 0,
+  "palets_mitad_derecha": 0,
+  "palets_cuadrante_superior_izquierdo": 0,
+  "palets_cuadrante_superior_derecho": 0,
+  "palets_cuadrante_inferior_izquierdo": 0,
+  "palets_cuadrante_inferior_derecho": 0,
+  "columnas_palets_visibles": 0,
+  "filas_palets_visibles": 0,
+  "bloques_palets_visibles": 0,
+  "numero_palets": 0,
+  "confianza_estimacion": "alta/media/baja"
+}
+
+Rules:
+- Focus on pallet footprints or pallet blocks on the floor, not on fruit pieces.
+- Do not merge adjacent pallets into one.
+- If pallets are partially cropped, still count them if more than half of the footprint is visible.
+- Use the quadrant counts to infer the TOTAL number of distinct pallets in the whole image.
+- Avoid undercounting warehouse grids.
+- Prefer the highest coherent total if the image clearly shows repeated pallet blocks.
+
+Previous reading:
+${JSON.stringify(parsed)}`;
+
+    const completion = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${img}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 300,
+      temperature: 0,
+    });
+
+    const response = completion.choices[0]?.message?.content || '{}';
+    const zoned = JSON.parse(response);
+    this.logVisionSnapshot('OpenAI zone recount raw JSON', zoned);
+
+    const zonedTotal = Math.max(
+      this.toNumber(zoned.numero_palets),
+      this.toNumber(zoned.bloques_palets_visibles),
+      Math.max(1, this.toNumber(zoned.columnas_palets_visibles)) *
+          Math.max(1, this.toNumber(zoned.filas_palets_visibles)),
+      this.toNumber(zoned.palets_mitad_superior) +
+          this.toNumber(zoned.palets_mitad_inferior),
+      this.toNumber(zoned.palets_mitad_izquierda) +
+          this.toNumber(zoned.palets_mitad_derecha),
+      this.toNumber(zoned.palets_cuadrante_superior_izquierdo) +
+          this.toNumber(zoned.palets_cuadrante_superior_derecho) +
+          this.toNumber(zoned.palets_cuadrante_inferior_izquierdo) +
+          this.toNumber(zoned.palets_cuadrante_inferior_derecho),
+    );
+
+    return {
+      ...parsed,
+      ...zoned,
+      numero_palets: Math.max(this.toNumber(parsed.numero_palets), zonedTotal),
+      bloques_palets_visibles: Math.max(
+        this.toNumber(parsed.bloques_palets_visibles),
+        this.toNumber(zoned.bloques_palets_visibles),
+        zonedTotal,
+      ),
+      columnas_palets_visibles: Math.max(
+        this.toNumber(parsed.columnas_palets_visibles),
+        this.toNumber(zoned.columnas_palets_visibles),
+      ),
+      filas_palets_visibles: Math.max(
+        this.toNumber(parsed.filas_palets_visibles),
+        this.toNumber(zoned.filas_palets_visibles),
+      ),
+    };
+  }
+
   async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
     const imageHash =
       `${payload?.image_hash ?? payload?.imageHash ?? payload?.resultado_ai?.image_hash ?? payload?.result?.image_hash ?? ''}`.trim() ||
@@ -1971,6 +2098,9 @@ IMPORTANT:
     if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
       parsed = await this.refinePalletEstimate(img, parsed, lang);
     }
+    if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
+      parsed = await this.zoneRecountPallets(img, parsed);
+    }
 
     let finalized = this.finalizeVisionResult(parsed);
     const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
@@ -2018,6 +2148,9 @@ try {
   this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
   if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
     parsed = await this.refinePalletEstimate(img, parsed, lang);
+  }
+  if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
+    parsed = await this.zoneRecountPallets(img, parsed);
   }
 
   let finalized = this.finalizeVisionResult(parsed);
