@@ -69,6 +69,10 @@ let image =
   normalized?.photoBase64 ??
   normalized?.file;
     const fastMode = normalized?.fast_mode === true || normalized?.fastMode === true;
+    const scanMode =
+      normalized?.scan_mode === 'multi' || normalized?.scanMode === 'multi'
+        ? 'multi'
+        : 'single';
 
 if (image && typeof image === 'object') {
   image = image.base64 ?? image.data ?? image.uri ?? null;
@@ -87,7 +91,7 @@ if (!image) {
   const result = await this.aiService.analyzeFruitImage(
   image,
   normalized?.language || 'es',
-  { imagePath, fastMode }
+  { imagePath, fastMode, scanMode }
 );
 
   const payload = {

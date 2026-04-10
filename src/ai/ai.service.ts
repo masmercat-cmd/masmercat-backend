@@ -898,6 +898,10 @@ export class AiService {
       return false;
     }
 
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() == 'multi') {
+      return true;
+    }
+
     const visibleRows = this.toNumber(parsed.filas_visibles);
     const visibleColumns = this.toNumber(parsed.columnas_visibles);
     const topBoxes = this.toNumber(parsed.cajas_superiores);
@@ -1904,7 +1908,7 @@ Rules:
   async analyzeFruitImage(
     base64Image: string,
     language: string = 'es',
-    options?: { imagePath?: string; fastMode?: boolean },
+    options?: { imagePath?: string; fastMode?: boolean; scanMode?: 'single' | 'multi' },
   ): Promise<any> {
   // Limpieza y normalización
   let img = (base64Image || '').trim();
@@ -2170,6 +2174,8 @@ IMPORTANT:
 
   const lang = (language || 'es').substring(0, 2);
   const prompt = prompts[lang] || prompts.es;
+  const requestedScanMode =
+    options?.scanMode === 'multi' ? 'multi' : 'single';
 
   console.log('🧠 analyzeFruitImage lang:', lang);
   console.log('🧠 analyzeFruitImage base64 length:', img.length);
@@ -2208,6 +2214,7 @@ IMPORTANT:
     console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
     
     let parsed = JSON.parse(response);
+    parsed.scan_mode = requestedScanMode;
     this.logVisionSnapshot('OpenAI attempt A raw JSON', parsed);
     if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
       parsed = await this.refinePalletEstimate(img, parsed, lang);
@@ -2260,6 +2267,7 @@ try {
   console.log('📄 OpenAI parsed JSON:', JSON.parse(response));
 
   let parsed = JSON.parse(response);
+  parsed.scan_mode = requestedScanMode;
   this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
   if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
     parsed = await this.refinePalletEstimate(img, parsed, lang);
