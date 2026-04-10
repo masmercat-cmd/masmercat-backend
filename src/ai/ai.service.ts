@@ -29,6 +29,10 @@ export class TransportTariffDto {
 @Injectable()
 export class AiService {
   private openai: OpenAI;
+  private readonly imageAnalysisCache = new Map<
+    string,
+    { result: any; expiresAt: number }
+  >();
 
   private logVisionSnapshot(label: string, payload: any): void {
     try {
@@ -337,6 +341,38 @@ export class AiService {
 
   private buildImageHash(base64Image: string): string {
     return createHash('sha256').update(base64Image).digest('hex');
+  }
+
+  private getCachedImageAnalysis(imageHash: string): any | null {
+    const cached = this.imageAnalysisCache.get(imageHash);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt < Date.now()) {
+      this.imageAnalysisCache.delete(imageHash);
+      return null;
+    }
+
+    return { ...cached.result };
+  }
+
+  private cacheImageAnalysis(imageHash: string, result: any): void {
+    if (!imageHash) {
+      return;
+    }
+
+    this.imageAnalysisCache.set(imageHash, {
+      result: { ...result },
+      expiresAt: Date.now() + 1000 * 60 * 30,
+    });
+
+    if (this.imageAnalysisCache.size > 200) {
+      const oldestKey = this.imageAnalysisCache.keys().next().value;
+      if (oldestKey) {
+        this.imageAnalysisCache.delete(oldestKey);
+      }
+    }
   }
 
   private mapSavedScanResult(saved: AiScanResult): Record<string, any> {
@@ -1841,6 +1877,14 @@ Rules:
     return restored;
   }
 
+  const cachedAnalysis = this.getCachedImageAnalysis(imageHash);
+  if (cachedAnalysis) {
+    cachedAnalysis.image_hash = imageHash;
+    cachedAnalysis.image_path = options?.imagePath ?? cachedAnalysis.image_path ?? null;
+    this.logVisionSnapshot('Reused cached image analysis', cachedAnalysis);
+    return cachedAnalysis;
+  }
+
   const prompts: any = {
     es: `Analiza esta imagen de frutas o verduras.
 
@@ -2138,6 +2182,7 @@ IMPORTANT:
 
     finalized.image_hash = imageHash;
     finalized.image_path = options?.imagePath ?? null;
+    this.cacheImageAnalysis(imageHash, finalized);
     this.logVisionSnapshot('Final pallet result attempt A', finalized);
     return finalized;
   } catch (error: any) {
@@ -2189,6 +2234,7 @@ try {
 
   finalized.image_hash = imageHash;
   finalized.image_path = options?.imagePath ?? null;
+  this.cacheImageAnalysis(imageHash, finalized);
   this.logVisionSnapshot('Final pallet result attempt B', finalized);
   return finalized;
 
