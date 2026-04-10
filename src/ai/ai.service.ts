@@ -958,6 +958,9 @@ export class AiService {
         1,
         Math.ceil(totalBoxes / conservativeSinglePalletCapacity),
       );
+      const warehouseCommercialPalletFloor = likelyIndustrial
+        ? Math.ceil(totalBoxes / 10)
+        : Math.ceil(totalBoxes / 8);
       const likelyHalfGridUndercount =
         explicitOrGridCount >= 6 &&
         explicitOrGridCount <= 12 &&
@@ -981,9 +984,14 @@ export class AiService {
         explicitOrGridCount <= 8 &&
         visibleRows <= 3 &&
         totalBoxes >= 90;
+      const likelyDenseWarehouseBatch =
+        totalBoxes >= 160 &&
+        (topBoxes >= 12 || visibleRows <= 3) &&
+        explicitOrGridCount <= 12;
       const inferred = Math.max(
         explicitOrGridCount,
         inferredByBoxes,
+        likelyDenseWarehouseBatch ? warehouseCommercialPalletFloor : 0,
         likelyHalfGridUndercount ? explicitOrGridCount * 2 : 0,
         likelyDoubleBlockWarehouse ? explicitOrGridCount * 2 : 0,
         likelyQuarteredWarehouseView ? explicitOrGridCount * 2 : 0,
