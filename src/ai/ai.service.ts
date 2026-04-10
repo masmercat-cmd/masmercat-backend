@@ -1025,15 +1025,17 @@ export class AiService {
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
     const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
+    const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+    const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const topBoxes = this.toNumber(parsed.cajas_superiores);
+    const visibleRows = this.toNumber(parsed.filas_visibles);
     const aiGrossWeight = this.toNumber(
       parsed.peso_bruto_kg ?? parsed.peso_estimado_kg,
     );
 
     if (envase.includes('palet') && palletCount >= 8) {
-      const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
-      const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
-      const likelyIndustrial =
-        palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
       const minimumBoxesPerPallet =
         palletCount >= 12
           ? likelyIndustrial
@@ -1072,6 +1074,10 @@ export class AiService {
       : envase.includes('palet')
         ? palletTareKg * Math.max(1, palletCount)
         : Number((boxes * tarePerBoxKg).toFixed(2));
+    const likelyWarehouseBatch =
+      envase.includes('palet') &&
+      palletCount >= 8 &&
+      (topBoxes >= 12 || visibleRows <= 3 || boxes >= 120);
 
     let netProductWeight = aiGrossWeight;
     if (isPalot) {
@@ -1094,6 +1100,14 @@ export class AiService {
       } else {
         netProductWeight = Number(estimatedNet.toFixed(2));
       }
+    }
+
+    if (likelyWarehouseBatch) {
+      const minimumNetPerPallet = likelyIndustrial ? 850 : 700;
+      netProductWeight = Math.max(
+        netProductWeight,
+        palletCount * minimumNetPerPallet,
+      );
     }
 
     const grossWeight = Number(
