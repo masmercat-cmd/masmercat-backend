@@ -858,6 +858,17 @@ export class AiService {
       return 0;
     }
 
+    const zoneHalfCount = Math.max(
+      this.toNumber(parsed.palets_mitad_superior) +
+        this.toNumber(parsed.palets_mitad_inferior),
+      this.toNumber(parsed.palets_mitad_izquierda) +
+        this.toNumber(parsed.palets_mitad_derecha),
+    );
+    const zoneQuadrantCount =
+      this.toNumber(parsed.palets_cuadrante_superior_izquierdo) +
+      this.toNumber(parsed.palets_cuadrante_superior_derecho) +
+      this.toNumber(parsed.palets_cuadrante_inferior_izquierdo) +
+      this.toNumber(parsed.palets_cuadrante_inferior_derecho);
     const explicitCount = Math.max(
       this.toNumber(parsed.numero_palets),
       this.toNumber(parsed.pallet_count),
@@ -870,6 +881,8 @@ export class AiService {
       this.toNumber(parsed.grupos_palets),
       this.toNumber(parsed.bloques_palets),
       this.toNumber(parsed.bloques_palets_visibles),
+      zoneHalfCount,
+      zoneQuadrantCount,
     );
     const palletGridCount =
       Math.max(1, this.toNumber(parsed.columnas_palets_visibles)) *
