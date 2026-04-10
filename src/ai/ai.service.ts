@@ -889,6 +889,37 @@ export class AiService {
     return 18;
   }
 
+  private isWarehouseStyleView(
+    parsed: any,
+    envase: string,
+    totalBoxes: number,
+  ): boolean {
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    const visibleRows = this.toNumber(parsed.filas_visibles);
+    const visibleColumns = this.toNumber(parsed.columnas_visibles);
+    const topBoxes = this.toNumber(parsed.cajas_superiores);
+    const explicitGridCount =
+      Math.max(1, this.toNumber(parsed.columnas_palets_visibles)) *
+      Math.max(1, this.toNumber(parsed.filas_palets_visibles));
+    const blockCount = Math.max(
+      this.toNumber(parsed.bloques_palets_visibles),
+      this.toNumber(parsed.grupos_palets),
+      explicitGridCount,
+    );
+
+    return (
+      (visibleRows > 0 && visibleRows <= 3 && topBoxes > 0 && totalBoxes >= 90) ||
+      (visibleRows <= 2 && visibleColumns <= 4 && totalBoxes >= 140) ||
+      (topBoxes >= 12 && totalBoxes >= 120) ||
+      (blockCount >= 4 && visibleRows <= 3) ||
+      (blockCount >= 6) ||
+      totalBoxes >= 160
+    );
+  }
+
   private inferPalletCount(parsed: any, envase: string): number {
     if (!envase.includes('palet') && !envase.includes('palot')) {
       return 0;
@@ -935,18 +966,12 @@ export class AiService {
     const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
     const likelyIndustrial =
       palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
-
-    const likelyTopView =
-      visibleRows > 0 &&
-      visibleRows <= 3 &&
-      topBoxes > 0 &&
-      totalBoxes >= 90;
     const explicitOrGridCount = Math.max(explicitCount, palletGridCount);
-    const likelyWarehouseMultiPallet =
-      likelyTopView ||
-      (visibleRows <= 2 && visibleColumns <= 4 && totalBoxes >= 140) ||
-      (topBoxes >= 18 && totalBoxes >= 120) ||
-      (explicitOrGridCount >= 8 && visibleRows <= 3);
+    const likelyWarehouseMultiPallet = this.isWarehouseStyleView(
+      parsed,
+      envase,
+      totalBoxes,
+    );
 
     if (explicitOrGridCount > 0 && !likelyWarehouseMultiPallet) {
       return Math.max(1, Math.round(explicitOrGridCount));
@@ -959,8 +984,8 @@ export class AiService {
         Math.ceil(totalBoxes / conservativeSinglePalletCapacity),
       );
       const warehouseCommercialPalletFloor = likelyIndustrial
-        ? Math.ceil(totalBoxes / 10)
-        : Math.ceil(totalBoxes / 8);
+        ? Math.ceil(totalBoxes / 7)
+        : Math.ceil(totalBoxes / 6);
       const likelyHalfGridUndercount =
         explicitOrGridCount >= 6 &&
         explicitOrGridCount <= 12 &&
@@ -1075,9 +1100,7 @@ export class AiService {
         ? palletTareKg * Math.max(1, palletCount)
         : Number((boxes * tarePerBoxKg).toFixed(2));
     const likelyWarehouseBatch =
-      envase.includes('palet') &&
-      palletCount >= 8 &&
-      (topBoxes >= 12 || visibleRows <= 3 || boxes >= 120);
+      palletCount >= 8 && this.isWarehouseStyleView(parsed, envase, boxes);
 
     let netProductWeight = aiGrossWeight;
     if (isPalot) {
@@ -1103,7 +1126,7 @@ export class AiService {
     }
 
     if (likelyWarehouseBatch) {
-      const minimumNetPerPallet = likelyIndustrial ? 850 : 700;
+      const minimumNetPerPallet = likelyIndustrial ? 900 : 750;
       netProductWeight = Math.max(
         netProductWeight,
         palletCount * minimumNetPerPallet,
@@ -1139,6 +1162,7 @@ export class AiService {
     }
 
     parsed.numero_palets = palletCount;
+    parsed.modo_conteo = likelyWarehouseBatch ? 'warehouse' : 'single_pallet';
 
     if (
       envase.includes('palet') &&
