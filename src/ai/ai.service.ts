@@ -1132,6 +1132,70 @@ export class AiService {
     return Math.max(estimatedBoxes, correctedBoxes);
   }
 
+  private applySingleCornerCommercialPattern(
+    parsed: any,
+    envase: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    if (!this.isSingleCornerPalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
+    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+
+    if (!likelyIndustrial || visibleColumns <= 0) {
+      return estimatedBoxes;
+    }
+
+    const likelyTallUnderCount =
+      estimatedBoxes >= 60 &&
+      estimatedBoxes <= 120 &&
+      visibleRows >= 8 &&
+      visibleRows <= 14 &&
+      estimatedDepth >= 3 &&
+      estimatedDepth <= 5 &&
+      topBoxes <= 8;
+
+    if (!likelyTallUnderCount) {
+      return estimatedBoxes;
+    }
+
+    const candidateTotals =
+      visibleColumns <= 2
+        ? [160, 168, 176, 184, 192]
+        : [144, 160, 168, 180];
+    const correctedBoxes = candidateTotals.reduce((best, candidate) => {
+      if (best === 0) return candidate;
+      return Math.abs(candidate - estimatedBoxes) < Math.abs(best - estimatedBoxes)
+        ? candidate
+        : best;
+    }, 0);
+
+    parsed.cajas_por_capa = Math.max(
+      this.toNumber(parsed?.cajas_por_capa),
+      visibleColumns * Math.max(estimatedDepth, 4),
+      visibleColumns <= 2 ? 8 : 12,
+    );
+    parsed.capas_estimadas = Math.max(
+      this.toNumber(parsed?.capas_estimadas),
+      Math.round(correctedBoxes / Math.max(1, this.toNumber(parsed.cajas_por_capa))),
+    );
+
+    return Math.max(estimatedBoxes, correctedBoxes);
+  }
+
   private inferPalletCount(parsed: any, envase: string): number {
     if (!envase.includes('palet') && !envase.includes('palot')) {
       return 0;
@@ -1262,6 +1326,12 @@ export class AiService {
     const isPalot = envase.includes('palot');
     const palletCount = this.inferPalletCount(parsed, envase);
     boxes = this.applySingleCornerBoxCorrection(parsed, envase, boxes, palletCount);
+    boxes = this.applySingleCornerCommercialPattern(
+      parsed,
+      envase,
+      boxes,
+      palletCount,
+    );
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
     const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
