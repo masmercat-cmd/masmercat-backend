@@ -2329,7 +2329,7 @@ Rules:
     try {
       console.log('Calling OpenAI (attempt A, staged vision)...');
       console.time('openai_attempt_A');
-      let parsed = await this.runStagedFruitVisionAnalysis(
+      let parsed = await this.runSceneAwareFruitVisionAnalysis(
         'data:image/jpeg;base64,' + img,
         lang,
         requestedScanMode,
@@ -2367,7 +2367,7 @@ Rules:
     try {
       console.log('Calling OpenAI (attempt B, staged vision)...');
       console.time('openai_attempt_B');
-      let parsed = await this.runStagedFruitVisionAnalysis(
+      let parsed = await this.runSceneAwareFruitVisionAnalysis(
         img,
         lang,
         requestedScanMode,
@@ -2455,6 +2455,235 @@ Rules:
       default:
         return this.buildSpanishVisionPrompts(scanMode);
     }
+  }
+
+  private inferScenePipeline(
+    stage1: any,
+    requestedScanMode: 'single' | 'multi',
+  ): 'single' | 'multi' {
+    if (requestedScanMode === 'multi') {
+      return 'multi';
+    }
+
+    const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+    const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
+    if (
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      ) ||
+      basePallets >= 2
+    ) {
+      return 'multi';
+    }
+
+    return 'single';
+  }
+
+  private async runSceneAwareFruitVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+  ): Promise<any> {
+    const prompts = this.buildStagedVisionPrompts(language, requestedScanMode);
+    const stage1 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage1,
+      'OpenAI staged vision step 1',
+      220,
+    );
+    const pipeline = this.inferScenePipeline(stage1, requestedScanMode);
+    this.logVisionSnapshot('OpenAI staged vision selected pipeline', {
+      requestedScanMode,
+      inferredPipeline: pipeline,
+      vista: stage1?.vista,
+      numero_palets_visibles_base: this.toNumber(
+        stage1?.numero_palets_visibles_base,
+      ),
+    });
+
+    if (pipeline === 'multi') {
+      return this.runMultiPalletVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+        stage1,
+      );
+    }
+
+    return this.runSinglePalletVisionAnalysis(
+      imageUrl,
+      language,
+      requestedScanMode,
+      stage1,
+    );
+  }
+
+  private async runSinglePalletVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+    stage1: any,
+  ): Promise<any> {
+    const prompts = this.buildStagedVisionPrompts(language, 'single');
+    const stage2 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage2 +
+        '\n\nSingle pallet pipeline.\nAssume one pallet unless another independent base is clearly visible.' +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1),
+      'OpenAI single pallet step 2',
+      260,
+    );
+    const stage3 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage3 +
+        '\n\nSingle pallet pipeline.\nKeep the analysis centered on one pallet block.' +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1) +
+        '\n\nLectura previa del paso 2:\n' +
+        JSON.stringify(stage2),
+      'OpenAI single pallet step 3',
+      320,
+    );
+
+    return this.mergeStagedVisionResult(
+      stage1,
+      stage2,
+      stage3,
+      requestedScanMode,
+      'single',
+    );
+  }
+
+  private async runMultiPalletVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+    stage1: any,
+  ): Promise<any> {
+    const prompts = this.buildStagedVisionPrompts(language, 'multi');
+    const stage2 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage2 +
+        '\n\nMulti pallet pipeline.\nCount full pallet footprints or repeated pallet blocks across the whole scene.' +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1),
+      'OpenAI multi pallet step 2',
+      260,
+    );
+    const stage3 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage3 +
+        '\n\nMulti pallet pipeline.\nPreserve the total visible warehouse grid and do not collapse the scene to one partial lane.' +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1) +
+        '\n\nLectura previa del paso 2:\n' +
+        JSON.stringify(stage2),
+      'OpenAI multi pallet step 3',
+      320,
+    );
+
+    return this.mergeStagedVisionResult(
+      stage1,
+      stage2,
+      stage3,
+      requestedScanMode,
+      'multi',
+    );
+  }
+
+  private mergeStagedVisionResult(
+    stage1: any,
+    stage2: any,
+    stage3: any,
+    requestedScanMode: 'single' | 'multi',
+    pipeline: 'single' | 'multi',
+  ): any {
+    const structuralColumns = this.toNumber(stage2?.columnas_visibles);
+    const structuralRows = this.toNumber(stage2?.filas_visibles);
+    const structuralDepth = this.toNumber(stage2?.profundidad_estimada);
+    const frontVisible =
+      structuralColumns > 0 && structuralRows > 0
+        ? structuralColumns * structuralRows
+        : 0;
+    const structuralBoxes =
+      structuralColumns > 0 && structuralRows > 0 && structuralDepth > 0
+        ? structuralColumns * structuralRows * structuralDepth
+        : 0;
+    const boxesPerLayer =
+      structuralColumns > 0 && structuralDepth > 0
+        ? structuralColumns * structuralDepth
+        : 0;
+
+    const merged = {
+      ...stage1,
+      ...stage2,
+      ...stage3,
+      categoria: stage3?.categoria ?? stage1?.categoria,
+      producto: stage3?.producto ?? stage1?.producto ?? stage3?.fruta,
+      envase: stage3?.envase ?? stage1?.envase,
+      material_caja: stage3?.material_caja ?? stage1?.material_caja,
+      numero_palets:
+        this.toNumber(stage3?.numero_palets) ||
+        this.toNumber(stage2?.numero_palets) ||
+        this.toNumber(stage1?.numero_palets_visibles_base),
+      cajas_estimadas:
+        this.toNumber(stage3?.cajas_estimadas) ||
+        this.toNumber(stage2?.cajas_estimadas),
+      cajas_aprox:
+        this.toNumber(stage3?.cajas_aprox) ||
+        this.toNumber(stage3?.cajas_estimadas) ||
+        this.toNumber(stage2?.cajas_estimadas),
+      scan_mode: requestedScanMode,
+      scene_pipeline: pipeline,
+    };
+
+    const stagedAuditEntry = {
+      language: stage1?.language ?? null,
+      requested_scan_mode: requestedScanMode,
+      scene_pipeline: pipeline,
+      stage1: {
+        vista: stage1?.vista,
+        producto: stage1?.producto,
+        envase: stage1?.envase,
+        numero_palets_visibles_base: this.toNumber(
+          stage1?.numero_palets_visibles_base,
+        ),
+      },
+      stage2: {
+        numero_palets: this.toNumber(stage2?.numero_palets),
+        columnas_visibles: structuralColumns,
+        filas_visibles: structuralRows,
+        profundidad_estimada: structuralDepth,
+        cajas_por_capa: this.toNumber(stage2?.cajas_por_capa),
+        cajas_superiores: this.toNumber(stage2?.cajas_superiores),
+        cajas_estimadas: this.toNumber(stage2?.cajas_estimadas),
+      },
+      stage3: {
+        numero_palets: this.toNumber(stage3?.numero_palets),
+        cajas_estimadas: this.toNumber(stage3?.cajas_estimadas),
+        cajas_aprox: this.toNumber(stage3?.cajas_aprox),
+        peso_estimado_kg: this.toNumber(stage3?.peso_estimado_kg),
+        peso_neto_kg: this.toNumber(stage3?.peso_neto_kg),
+      },
+      combined_structure: {
+        front_visible: frontVisible,
+        structural_boxes: structuralBoxes,
+        cajas_por_capa: boxesPerLayer,
+      },
+      final: {
+        numero_palets: this.toNumber(merged.numero_palets),
+        cajas_estimadas: this.toNumber(merged.cajas_estimadas),
+        cajas_aprox: this.toNumber(merged.cajas_aprox),
+        profundidad_estimada: this.toNumber(
+          merged.profundidad_estimada ?? stage2?.profundidad_estimada,
+        ),
+      },
+    };
+    this.pushStagedVisionAudit(stagedAuditEntry);
+    this.logVisionSnapshot('OpenAI staged vision audit summary', stagedAuditEntry);
+    this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
+    return merged;
   }
 
   private buildEnglishVisionPrompts(
@@ -2755,120 +2984,6 @@ Rules:
         'Is phal ya sabzi ki tasveer ka vishleshan karo.\n\nKadam 3 sirf: pehle ke scene reading aur structural count ka upyog karke vyaparik totals ka andaza lagao.\n\n' +
         prompts.stage3.split('\n\n').slice(2).join('\n\n'),
     };
-  }
-
-  private async runStagedFruitVisionAnalysis(
-    imageUrl: string,
-    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
-    scanMode: 'single' | 'multi',
-  ): Promise<any> {
-    const prompts = this.buildStagedVisionPrompts(language, scanMode);
-    const stage1 = await this.requestVisionJson(
-      imageUrl,
-      prompts.stage1,
-      'OpenAI staged vision step 1',
-      220,
-    );
-    const stage2 = await this.requestVisionJson(
-      imageUrl,
-      prompts.stage2 + '\n\nLectura previa del paso 1:\n' + JSON.stringify(stage1),
-      'OpenAI staged vision step 2',
-      260,
-    );
-    const stage3 = await this.requestVisionJson(
-      imageUrl,
-      prompts.stage3 +
-        '\n\nLectura previa del paso 1:\n' +
-        JSON.stringify(stage1) +
-        '\n\nLectura previa del paso 2:\n' +
-        JSON.stringify(stage2),
-      'OpenAI staged vision step 3',
-      320,
-    );
-
-    const structuralColumns = this.toNumber(stage2?.columnas_visibles);
-    const structuralRows = this.toNumber(stage2?.filas_visibles);
-    const structuralDepth = this.toNumber(stage2?.profundidad_estimada);
-    const frontVisible = structuralColumns > 0 && structuralRows > 0
-      ? structuralColumns * structuralRows
-      : 0;
-    const structuralBoxes =
-      structuralColumns > 0 && structuralRows > 0 && structuralDepth > 0
-        ? structuralColumns * structuralRows * structuralDepth
-        : 0;
-    const boxesPerLayer =
-      structuralColumns > 0 && structuralDepth > 0
-        ? structuralColumns * structuralDepth
-        : 0;
-
-    const merged = {
-      ...stage1,
-      ...stage2,
-      ...stage3,
-      categoria: stage3?.categoria ?? stage1?.categoria,
-      producto: stage3?.producto ?? stage1?.producto ?? stage3?.fruta,
-      envase: stage3?.envase ?? stage1?.envase,
-      material_caja: stage3?.material_caja ?? stage1?.material_caja,
-      numero_palets:
-        this.toNumber(stage3?.numero_palets) ||
-        this.toNumber(stage2?.numero_palets) ||
-        this.toNumber(stage1?.numero_palets_visibles_base),
-      cajas_estimadas:
-        this.toNumber(stage3?.cajas_estimadas) ||
-        this.toNumber(stage2?.cajas_estimadas),
-      cajas_aprox:
-        this.toNumber(stage3?.cajas_aprox) ||
-        this.toNumber(stage3?.cajas_estimadas) ||
-        this.toNumber(stage2?.cajas_estimadas),
-      scan_mode: scanMode,
-    };
-
-    const stagedAuditEntry = {
-      language,
-      scan_mode: scanMode,
-      stage1: {
-        vista: stage1?.vista,
-        producto: stage1?.producto,
-        envase: stage1?.envase,
-        numero_palets_visibles_base: this.toNumber(
-          stage1?.numero_palets_visibles_base,
-        ),
-      },
-      stage2: {
-        numero_palets: this.toNumber(stage2?.numero_palets),
-        columnas_visibles: structuralColumns,
-        filas_visibles: structuralRows,
-        profundidad_estimada: structuralDepth,
-        cajas_por_capa: this.toNumber(stage2?.cajas_por_capa),
-        cajas_superiores: this.toNumber(stage2?.cajas_superiores),
-        cajas_estimadas: this.toNumber(stage2?.cajas_estimadas),
-      },
-      stage3: {
-        numero_palets: this.toNumber(stage3?.numero_palets),
-        cajas_estimadas: this.toNumber(stage3?.cajas_estimadas),
-        cajas_aprox: this.toNumber(stage3?.cajas_aprox),
-        peso_estimado_kg: this.toNumber(stage3?.peso_estimado_kg),
-        peso_neto_kg: this.toNumber(stage3?.peso_neto_kg),
-      },
-      combined_structure: {
-        front_visible: frontVisible,
-        structural_boxes: structuralBoxes,
-        cajas_por_capa: boxesPerLayer,
-      },
-      final: {
-        numero_palets: this.toNumber(merged.numero_palets),
-        cajas_estimadas: this.toNumber(merged.cajas_estimadas),
-        cajas_aprox: this.toNumber(merged.cajas_aprox),
-        profundidad_estimada: this.toNumber(
-          merged.profundidad_estimada ?? stage2?.profundidad_estimada,
-        ),
-      },
-    };
-    this.pushStagedVisionAudit(stagedAuditEntry);
-    this.logVisionSnapshot('OpenAI staged vision audit summary', stagedAuditEntry);
-
-    this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
-    return merged;
   }
 
 }
