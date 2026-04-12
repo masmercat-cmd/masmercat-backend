@@ -34,6 +34,9 @@ export class Message {
   @Column()
   sellerId: string;
 
+  @Column({ nullable: true })
+  senderId: string | null;
+
   @Column({ type: 'text' })
   message: string;
 

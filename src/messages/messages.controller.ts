@@ -37,4 +37,24 @@ export class MessagesController {
   async markAsRead(@Param('id') id: string, @Req() req: any) {
     return this.messagesService.markAsRead(id, req.user);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('thread')
+  async getThreadMessages(
+    @Req() req: any,
+    @Query('lotId') lotId: string,
+    @Query('userId') userId: string,
+  ) {
+    return this.messagesService.getThreadMessages(lotId, userId, req.user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('thread/read')
+  async markThreadAsRead(
+    @Req() req: any,
+    @Query('lotId') lotId: string,
+    @Query('userId') userId: string,
+  ) {
+    return this.messagesService.markThreadAsRead(lotId, userId, req.user);
+  }
 }
