@@ -2795,6 +2795,39 @@ Rules:
     );
   }
 
+  private shouldRunTopWarehouseFlow(
+    parsed: any,
+    scanMode: 'single' | 'multi',
+  ): boolean {
+    const envase = this.normalizeEnvase(parsed?.envase);
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const palletCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+    );
+
+    return (
+      scanMode === 'multi' ||
+      view.includes('almacen') ||
+      view.includes('warehouse') ||
+      view.includes('superior') ||
+      view.includes('top') ||
+      this.isWarehouseStyleView(parsed, envase, totalBoxes) ||
+      (palletCount >= 4 && (visibleRows <= 3 || topBoxes >= 10))
+    );
+  }
+
   private buildCornerPalletPrompts(
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
   ): { front: string; side: string; final: string } {
@@ -3067,6 +3100,271 @@ Rules:
     return merged;
   }
 
+  private buildTopWarehousePrompts(
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+  ): { footprints: string; grid: string; final: string } {
+    const english = {
+      footprints: [
+        'Analyze this top-view or warehouse pallet image.',
+        '',
+        'Top warehouse mode, footprint step only.',
+        'Count pallet footprints or pallet blocks on the floor before any box estimate.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "confianza_huellas": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Focus on pallet bases or repeated pallet tops.',
+        '- Do not merge adjacent pallets.',
+        '- Prefer the total visible grid, not one partial row.',
+      ].join('\n'),
+      grid: [
+        'Analyze this top-view or warehouse pallet image.',
+        '',
+        'Top warehouse mode, box-grid step only.',
+        'Estimate boxes per pallet or per visible block using the top pattern, without reducing the pallet count.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "cajas_por_capa": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "medidas_caja": "60x40 cm approx",',
+        '  "medidas_palet": "120x100 cm approx",',
+        '  "confianza_rejilla": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Use top repetition to estimate commercial pallet structure.',
+        '- Do not divide the scene total by mistake.',
+        '- If repeated blocks form a clear warehouse grid, keep the total grid coherent.',
+      ].join('\n'),
+      final: [
+        'Analyze this top-view or warehouse pallet image.',
+        '',
+        'Top warehouse mode, final consolidation.',
+        'Use pallet footprints and top-grid structure to estimate the full scene total.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "peso_estimado_kg": 0,',
+        '  "tara_kg": 0,',
+        '  "peso_neto_kg": 0,',
+        '  "confianza_estimacion": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Count the whole warehouse grid, not only one side or one lane.',
+        '- Prefer the total visible pallet matrix when repeated pallet blocks are clear.',
+        '- Keep pallet count and boxes internally consistent.',
+      ].join('\n'),
+    };
+
+    if (language === 'es') {
+      return {
+        footprints: [
+          'Analiza esta imagen de vista superior o de almacen con palets.',
+          '',
+          'Modo vista superior/almacen, paso de huellas solamente.',
+          'Cuenta huellas de palet o bloques de palets en el suelo antes de estimar cajas.',
+          '',
+          'Devuelve SOLO JSON valido:',
+          '{',
+          '  "numero_palets": 0,',
+          '  "columnas_palets_visibles": 0,',
+          '  "filas_palets_visibles": 0,',
+          '  "bloques_palets_visibles": 0,',
+          '  "confianza_huellas": "alta/media/baja"',
+          '}',
+          '',
+          'Reglas:',
+          '- Fijate en bases de palet o tapas repetidas de palets.',
+          '- No unas palets contiguos como si fueran uno solo.',
+          '- Prioriza la rejilla total visible, no una sola fila parcial.',
+        ].join('\n'),
+        grid: [
+          'Analiza esta imagen de vista superior o de almacen con palets.',
+          '',
+          'Modo vista superior/almacen, paso de rejilla de cajas solamente.',
+          'Estima cajas por palet o por bloque visible usando el patron superior, sin reducir el numero de palets.',
+          '',
+          'Devuelve SOLO JSON valido:',
+          '{',
+          '  "cajas_por_capa": 0,',
+          '  "cajas_superiores": 0,',
+          '  "cajas_estimadas": 0,',
+          '  "medidas_caja": "60x40 cm aprox",',
+          '  "medidas_palet": "120x100 cm aprox",',
+          '  "confianza_rejilla": "alta/media/baja"',
+          '}',
+          '',
+          'Reglas:',
+          '- Usa la repeticion superior para estimar estructura comercial por palet.',
+          '- No dividas por error el total de la escena.',
+          '- Si los bloques repetidos forman una rejilla clara de almacen, mantén coherencia con esa matriz completa.',
+        ].join('\n'),
+        final: [
+          'Analiza esta imagen de vista superior o de almacen con palets.',
+          '',
+          'Modo vista superior/almacen, consolidacion final.',
+          'Usa huellas de palet y estructura superior para estimar el total completo de la escena.',
+          '',
+          'Devuelve SOLO JSON valido:',
+          '{',
+          '  "numero_palets": 0,',
+          '  "columnas_palets_visibles": 0,',
+          '  "filas_palets_visibles": 0,',
+          '  "bloques_palets_visibles": 0,',
+          '  "cajas_estimadas": 0,',
+          '  "cajas_aprox": 0,',
+          '  "peso_estimado_kg": 0,',
+          '  "tara_kg": 0,',
+          '  "peso_neto_kg": 0,',
+          '  "confianza_estimacion": "alta/media/baja"',
+          '}',
+          '',
+          'Reglas:',
+          '- Cuenta toda la matriz visible de almacen, no solo un lateral o un pasillo.',
+          '- Prioriza la matriz total visible de palets cuando los bloques repetidos sean claros.',
+          '- Mantén coherencia interna entre palets y cajas.',
+        ].join('\n'),
+      };
+    }
+
+    return english;
+  }
+
+  private async runTopWarehouseVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    base: any,
+  ): Promise<any> {
+    const prompts = this.buildTopWarehousePrompts(language);
+    const footprints = await this.requestVisionJson(
+      imageUrl,
+      prompts.footprints + '\n\nBase reading:\n' + JSON.stringify(base),
+      'OpenAI top warehouse footprints step',
+      220,
+    );
+    const grid = await this.requestVisionJson(
+      imageUrl,
+      prompts.grid +
+        '\n\nBase reading:\n' +
+        JSON.stringify(base) +
+        '\n\nFootprint reading:\n' +
+        JSON.stringify(footprints),
+      'OpenAI top warehouse grid step',
+      220,
+    );
+    const final = await this.requestVisionJson(
+      imageUrl,
+      prompts.final +
+        '\n\nBase reading:\n' +
+        JSON.stringify(base) +
+        '\n\nFootprint reading:\n' +
+        JSON.stringify(footprints) +
+        '\n\nGrid reading:\n' +
+        JSON.stringify(grid),
+      'OpenAI top warehouse final step',
+      280,
+    );
+
+    const footprintCount = Math.max(
+      this.toNumber(footprints?.numero_palets),
+      this.toNumber(footprints?.bloques_palets_visibles),
+      Math.max(1, this.toNumber(footprints?.columnas_palets_visibles)) *
+        Math.max(1, this.toNumber(footprints?.filas_palets_visibles)),
+    );
+
+    const merged = {
+      ...base,
+      ...footprints,
+      ...grid,
+      ...final,
+      numero_palets:
+        this.toNumber(final?.numero_palets) ||
+        footprintCount ||
+        this.toNumber(base?.numero_palets),
+      columnas_palets_visibles:
+        this.toNumber(final?.columnas_palets_visibles) ||
+        this.toNumber(footprints?.columnas_palets_visibles) ||
+        this.toNumber(base?.columnas_palets_visibles),
+      filas_palets_visibles:
+        this.toNumber(final?.filas_palets_visibles) ||
+        this.toNumber(footprints?.filas_palets_visibles) ||
+        this.toNumber(base?.filas_palets_visibles),
+      bloques_palets_visibles:
+        this.toNumber(final?.bloques_palets_visibles) ||
+        this.toNumber(footprints?.bloques_palets_visibles) ||
+        footprintCount,
+      cajas_por_capa:
+        this.toNumber(grid?.cajas_por_capa) ||
+        this.toNumber(base?.cajas_por_capa),
+      cajas_superiores:
+        this.toNumber(grid?.cajas_superiores) ||
+        this.toNumber(base?.cajas_superiores),
+      cajas_estimadas:
+        this.toNumber(final?.cajas_estimadas) ||
+        this.toNumber(grid?.cajas_estimadas) ||
+        this.toNumber(base?.cajas_estimadas),
+      cajas_aprox:
+        this.toNumber(final?.cajas_aprox) ||
+        this.toNumber(final?.cajas_estimadas) ||
+        this.toNumber(grid?.cajas_estimadas) ||
+        this.toNumber(base?.cajas_aprox),
+      scan_mode: base?.scan_mode ?? 'multi',
+    };
+
+    const auditEntry = {
+      language,
+      scan_mode: merged.scan_mode,
+      mode: 'top_warehouse',
+      base: {
+        numero_palets: this.toNumber(base?.numero_palets),
+        cajas_estimadas: this.toNumber(base?.cajas_estimadas),
+        vista: base?.vista,
+      },
+      footprints: {
+        numero_palets: this.toNumber(footprints?.numero_palets),
+        columnas_palets_visibles: this.toNumber(
+          footprints?.columnas_palets_visibles,
+        ),
+        filas_palets_visibles: this.toNumber(
+          footprints?.filas_palets_visibles,
+        ),
+        bloques_palets_visibles: this.toNumber(
+          footprints?.bloques_palets_visibles,
+        ),
+      },
+      grid: {
+        cajas_por_capa: this.toNumber(grid?.cajas_por_capa),
+        cajas_superiores: this.toNumber(grid?.cajas_superiores),
+        cajas_estimadas: this.toNumber(grid?.cajas_estimadas),
+      },
+      final: {
+        numero_palets: this.toNumber(merged?.numero_palets),
+        cajas_estimadas: this.toNumber(merged?.cajas_estimadas),
+        cajas_aprox: this.toNumber(merged?.cajas_aprox),
+      },
+    };
+    this.pushStagedVisionAudit(auditEntry);
+    this.logVisionSnapshot('OpenAI top warehouse audit summary', auditEntry);
+
+    return merged;
+  }
+
   private async runStagedFruitVisionAnalysis(
     imageUrl: string,
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
@@ -3176,6 +3474,10 @@ Rules:
     };
     this.pushStagedVisionAudit(stagedAuditEntry);
     this.logVisionSnapshot('OpenAI staged vision audit summary', stagedAuditEntry);
+
+    if (this.shouldRunTopWarehouseFlow(merged, scanMode)) {
+      return this.runTopWarehouseVisionAnalysis(imageUrl, language, merged);
+    }
 
     if (this.shouldRunCornerPalletFlow(merged, scanMode)) {
       return this.runCornerPalletVisionAnalysis(imageUrl, language, merged);
