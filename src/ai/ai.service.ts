@@ -34,6 +34,7 @@ export class AiService {
     { result: any; expiresAt: number }
   >();
   private readonly weightAdjustmentAudit: Array<Record<string, any>> = [];
+  private readonly stagedVisionAudit: Array<Record<string, any>> = [];
 
   private logVisionSnapshot(label: string, payload: any): void {
     try {
@@ -54,9 +55,25 @@ export class AiService {
     }
   }
 
+  private pushStagedVisionAudit(entry: Record<string, any>): void {
+    this.stagedVisionAudit.unshift({
+      createdAt: new Date().toISOString(),
+      ...entry,
+    });
+
+    if (this.stagedVisionAudit.length > 100) {
+      this.stagedVisionAudit.length = 100;
+    }
+  }
+
   getRecentWeightAdjustmentAudit(limit: number = 20): Array<Record<string, any>> {
     const normalizedLimit = this.clamp(Math.round(this.toNumber(limit) || 20), 1, 100);
     return this.weightAdjustmentAudit.slice(0, normalizedLimit);
+  }
+
+  getRecentStagedVisionAudit(limit: number = 20): Array<Record<string, any>> {
+    const normalizedLimit = this.clamp(Math.round(this.toNumber(limit) || 20), 1, 100);
+    return this.stagedVisionAudit.slice(0, normalizedLimit);
   }
 
   private toNumber(value: any): number {
@@ -2852,6 +2869,46 @@ Rules:
         frontVisible,
       scan_mode: scanMode,
     };
+
+    const stagedAuditEntry = {
+      language,
+      scan_mode: scanMode,
+      stage1: {
+        vista: stage1?.vista,
+        producto: stage1?.producto,
+        envase: stage1?.envase,
+        numero_palets_visibles_base: this.toNumber(
+          stage1?.numero_palets_visibles_base,
+        ),
+      },
+      front: {
+        numero_palets: this.toNumber(stage2Front?.numero_palets),
+        columnas_visibles: frontColumns,
+        filas_visibles: frontRows,
+        cajas_estimadas: this.toNumber(stage2Front?.cajas_estimadas),
+        cajas_superiores: this.toNumber(stage2Front?.cajas_superiores),
+      },
+      side: {
+        numero_palets: this.toNumber(stage3Side?.numero_palets),
+        profundidad_estimada: sideDepth,
+        cajas_por_capa: this.toNumber(stage3Side?.cajas_por_capa),
+        cajas_superiores: this.toNumber(stage3Side?.cajas_superiores),
+        cajas_estimadas: this.toNumber(stage3Side?.cajas_estimadas),
+      },
+      combined_structure: {
+        front_visible: frontVisible,
+        structural_boxes: structuralBoxes,
+        cajas_por_capa: boxesPerLayer,
+      },
+      final: {
+        numero_palets: this.toNumber(merged.numero_palets),
+        cajas_estimadas: this.toNumber(merged.cajas_estimadas),
+        cajas_aprox: this.toNumber(merged.cajas_aprox),
+        profundidad_estimada: this.toNumber(merged.profundidad_estimada),
+      },
+    };
+    this.pushStagedVisionAudit(stagedAuditEntry);
+    this.logVisionSnapshot('OpenAI staged vision audit summary', stagedAuditEntry);
 
     this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
     return merged;

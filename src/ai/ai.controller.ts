@@ -205,4 +205,21 @@ if (!image) {
       return { ok: false, error: err?.message || 'Error interno cargando auditoria' };
     }
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('audit/staged-vision')
+  async getStagedVisionAudit(@Query('limit') limit?: string) {
+    try {
+      const results = this.aiService.getRecentStagedVisionAudit(
+        Number(limit ?? 20),
+      );
+      return { ok: true, count: results.length, results };
+    } catch (err: any) {
+      console.log('ERROR getStagedVisionAudit:', err?.message || err);
+      return {
+        ok: false,
+        error: err?.message || 'Error interno cargando auditoria escalonada',
+      };
+    }
+  }
 }
