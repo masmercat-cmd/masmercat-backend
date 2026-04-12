@@ -2746,48 +2746,161 @@ Rules:
     scanMode: 'single' | 'multi',
   ): Promise<any> {
     const prompts = this.buildStagedVisionPrompts(language, scanMode);
+    const frontFocus = this.buildStructureFocusInstructions(language, 'front');
+    const sideFocus = this.buildStructureFocusInstructions(language, 'side');
     const stage1 = await this.requestVisionJson(
       imageUrl,
       prompts.stage1,
       'OpenAI staged vision step 1',
       220,
     );
-    const stage2 = await this.requestVisionJson(
+    const stage2Front = await this.requestVisionJson(
       imageUrl,
-      prompts.stage2 + '\n\nLectura previa del paso 1:\n' + JSON.stringify(stage1),
-      'OpenAI staged vision step 2',
-      260,
+      prompts.stage2 +
+        '\n\n' +
+        frontFocus +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1),
+      'OpenAI staged vision step 2 front',
+      240,
     );
-    const stage3 = await this.requestVisionJson(
+    const stage3Side = await this.requestVisionJson(
       imageUrl,
-      prompts.stage3 + '\n\nLectura previa del paso 1:\n' + JSON.stringify(stage1) + '\n\nLectura previa del paso 2:\n' + JSON.stringify(stage2),
-      'OpenAI staged vision step 3',
+      prompts.stage2 +
+        '\n\n' +
+        sideFocus +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1) +
+        '\n\nLectura previa del conteo frontal:\n' +
+        JSON.stringify(stage2Front),
+      'OpenAI staged vision step 3 side',
+      240,
+    );
+    const stage4 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage3 +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1) +
+        '\n\nLectura previa del conteo frontal:\n' +
+        JSON.stringify(stage2Front) +
+        '\n\nLectura previa del conteo lateral y profundidad:\n' +
+        JSON.stringify(stage3Side),
+      'OpenAI staged vision step 4 commercial',
       320,
     );
 
+    const frontColumns = this.toNumber(stage2Front?.columnas_visibles);
+    const frontRows = this.toNumber(stage2Front?.filas_visibles);
+    const sideDepth = this.toNumber(stage3Side?.profundidad_estimada);
+    const frontVisible = frontColumns > 0 && frontRows > 0
+      ? frontColumns * frontRows
+      : 0;
+    const structuralBoxes =
+      frontColumns > 0 && frontRows > 0 && sideDepth > 0
+        ? frontColumns * frontRows * sideDepth
+        : 0;
+    const boxesPerLayer =
+      frontColumns > 0 && sideDepth > 0 ? frontColumns * sideDepth : 0;
+
     const merged = {
       ...stage1,
-      ...stage2,
-      ...stage3,
-      categoria: stage3?.categoria ?? stage1?.categoria,
-      producto: stage3?.producto ?? stage1?.producto ?? stage3?.fruta,
-      envase: stage3?.envase ?? stage1?.envase,
-      material_caja: stage3?.material_caja ?? stage1?.material_caja,
+      ...stage2Front,
+      ...stage3Side,
+      ...stage4,
+      columnas_visibles:
+        frontColumns ||
+        this.toNumber(stage4?.columnas_visibles) ||
+        this.toNumber(stage3Side?.columnas_visibles),
+      filas_visibles:
+        frontRows ||
+        this.toNumber(stage4?.filas_visibles) ||
+        this.toNumber(stage3Side?.filas_visibles),
+      profundidad_estimada:
+        sideDepth ||
+        this.toNumber(stage4?.profundidad_estimada) ||
+        this.toNumber(stage2Front?.profundidad_estimada),
+      cajas_por_capa:
+        boxesPerLayer ||
+        this.toNumber(stage4?.cajas_por_capa) ||
+        this.toNumber(stage3Side?.cajas_por_capa),
+      capas_estimadas:
+        frontRows ||
+        this.toNumber(stage4?.capas_estimadas) ||
+        this.toNumber(stage2Front?.capas_estimadas),
+      cajas_superiores:
+        this.toNumber(stage3Side?.cajas_superiores) ||
+        this.toNumber(stage4?.cajas_superiores) ||
+        this.toNumber(stage2Front?.cajas_superiores),
+      categoria: stage4?.categoria ?? stage1?.categoria,
+      producto: stage4?.producto ?? stage1?.producto ?? stage4?.fruta,
+      envase: stage4?.envase ?? stage1?.envase,
+      material_caja: stage4?.material_caja ?? stage1?.material_caja,
       numero_palets:
-        this.toNumber(stage3?.numero_palets) ||
-        this.toNumber(stage2?.numero_palets) ||
+        this.toNumber(stage4?.numero_palets) ||
+        this.toNumber(stage3Side?.numero_palets) ||
+        this.toNumber(stage2Front?.numero_palets) ||
         this.toNumber(stage1?.numero_palets_visibles_base),
       cajas_estimadas:
-        this.toNumber(stage3?.cajas_estimadas) ||
-        this.toNumber(stage2?.cajas_estimadas),
+        this.toNumber(stage4?.cajas_estimadas) ||
+        structuralBoxes ||
+        this.toNumber(stage3Side?.cajas_estimadas) ||
+        this.toNumber(stage2Front?.cajas_estimadas),
       cajas_aprox:
-        this.toNumber(stage3?.cajas_aprox) ||
-        this.toNumber(stage3?.cajas_estimadas) ||
-        this.toNumber(stage2?.cajas_estimadas),
+        this.toNumber(stage4?.cajas_aprox) ||
+        this.toNumber(stage4?.cajas_estimadas) ||
+        structuralBoxes ||
+        frontVisible,
       scan_mode: scanMode,
     };
 
     this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
     return merged;
+  }
+
+  private buildStructureFocusInstructions(
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    focus: 'front' | 'side',
+  ): string {
+    if (focus === 'front') {
+      switch (language) {
+        case 'es':
+          return 'Foco extra: en este paso cuenta SOLO la cara frontal. No conviertas todavia ese frontal en volumen total. Devuelve columnas frontales completas y filas visibles en altura.';
+        case 'fr':
+          return "Focus supplementaire : dans cette etape, compte SEULEMENT la face frontale. Ne convertis pas encore cette face en volume total. Renvoie les colonnes frontales completes et les rangees visibles en hauteur.";
+        case 'de':
+          return 'Zusaetzlicher Fokus: Zaehle in diesem Schritt NUR die Frontseite. Wandle diese Front noch nicht in ein Gesamtvolumen um. Gib volle Frontspalten und sichtbare Reihen in der Hoehe zurueck.';
+        case 'pt':
+          return 'Foco extra: neste passo conta APENAS a face frontal. Ainda nao transformes essa frente no volume total. Devolve colunas frontais completas e filas visiveis em altura.';
+        case 'ar':
+          return 'تركيز إضافي: في هذه الخطوة عد الواجهة الأمامية فقط. لا تحول هذه الواجهة بعد إلى الحجم الكلي. أرجع الأعمدة الأمامية الكاملة والصفوف الظاهرة في الارتفاع.';
+        case 'zh':
+          return '额外重点：这一步只统计正面。先不要把正面直接换算成总体积。返回完整的正面列数和可见高度层数。';
+        case 'hi':
+          return 'Atirikt dhyan: is kadam mein sirf samne wali satah gino. Is frontal reading ko abhi total volume mein mat badlo. Puri samne ki columns aur unchai ki visible rows do.';
+        case 'en':
+        default:
+          return 'Extra focus: in this step count ONLY the front face. Do not convert that front into full volume yet. Return full front columns and visible rows in height.';
+      }
+    }
+
+    switch (language) {
+      case 'es':
+        return 'Foco extra: en este paso mide SOLO el lateral y la profundidad. Usa la parte superior y el lateral para estimar fondo real, cajas por capa y huella del palet. No cambies el numero de filas frontales.';
+      case 'fr':
+        return "Focus supplementaire : dans cette etape, mesure SEULEMENT le cote et la profondeur. Utilise le dessus et le cote pour estimer la profondeur reelle, les caisses par couche et l'empreinte de la palette. Ne change pas le nombre de rangees frontales.";
+      case 'de':
+        return 'Zusaetzlicher Fokus: Miss in diesem Schritt NUR die Seite und die Tiefe. Nutze Oberseite und Seitenansicht fuer reale Tiefe, Kisten pro Lage und Palettenflaeche. Veraendere nicht die Zahl der Frontreihen.';
+      case 'pt':
+        return 'Foco extra: neste passo mede APENAS a lateral e a profundidade. Usa o topo e a lateral para estimar profundidade real, caixas por camada e pegada da palete. Nao alteres o numero de filas frontais.';
+      case 'ar':
+        return 'تركيز إضافي: في هذه الخطوة قس الجانب والعمق فقط. استخدم السطح العلوي والجانب لتقدير العمق الحقيقي والصناديق في كل طبقة وبصمة البالتة. لا تغير عدد الصفوف الأمامية.';
+      case 'zh':
+        return '额外重点：这一步只看侧面和深度。利用顶部和侧面估计真实深度、每层箱数和托盘占地。不要修改正面可见层数。';
+      case 'hi':
+        return 'Atirikt dhyan: is kadam mein sirf side aur depth naapho. Upar aur side ko use karke asli gehraai, har layer ke boxes aur pallet footprint ka andaza lagao. Samne ki rows mat badlo.';
+      case 'en':
+      default:
+        return 'Extra focus: in this step measure ONLY the side and depth. Use the top and side to estimate real depth, boxes per layer and pallet footprint. Do not change the front row count.';
+    }
   }
 }
