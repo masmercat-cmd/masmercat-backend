@@ -2757,6 +2757,316 @@ Rules:
     };
   }
 
+  private shouldRunCornerPalletFlow(
+    parsed: any,
+    scanMode: 'single' | 'multi',
+  ): boolean {
+    if (scanMode !== 'single') {
+      return false;
+    }
+
+    const envase = this.normalizeEnvase(parsed?.envase);
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const palletCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.numero_palets_visibles_base),
+    );
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+
+    return (
+      ['diagonal', 'lateral', 'frontal', 'side', 'front'].some((term) =>
+        view.includes(term),
+      ) &&
+      palletCount >= 1 &&
+      palletCount <= 2 &&
+      totalBoxes <= 120 &&
+      visibleRows >= 6 &&
+      topBoxes <= 10
+    );
+  }
+
+  private buildCornerPalletPrompts(
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+  ): { front: string; side: string; final: string } {
+    const english = {
+      front: [
+        'Analyze this pallet corner image.',
+        '',
+        'Corner pallet mode, front step only.',
+        'Count ONLY the front face of the SAME pallet block.',
+        'Do not count the side face as a second pallet.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 1,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "frontal_visible_cajas": 0,',
+        '  "confianza_frontal": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- This is a corner view of one pallet unless a second base is clearly separate.',
+        '- Count full front columns only.',
+        '- Count full front rows in height only.',
+        '- Ignore side-depth in this step.',
+      ].join('\n'),
+      side: [
+        'Analyze this pallet corner image.',
+        '',
+        'Corner pallet mode, side step only.',
+        'Estimate ONLY side depth and full-layer footprint for the SAME pallet block.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 1,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "cajas_superiores": 0,',
+        '  "medidas_caja": "60x40 cm approx",',
+        '  "medidas_palet": "Industrial pallet (120x100 cm approx) / Europallet (120x80 cm approx)",',
+        '  "confianza_lateral": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Do not recount front rows here.',
+        '- Use side and top visibility to estimate real depth.',
+        '- If this looks like a dense commercial pallet, prefer commercial layer footprints over shallow guesses.',
+      ].join('\n'),
+      final: [
+        'Analyze this pallet corner image.',
+        '',
+        'Corner pallet mode, final consolidation.',
+        'Use the front count and side depth to estimate the full commercial pallet total.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 1,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "peso_estimado_kg": 0,',
+        '  "tara_kg": 0,',
+        '  "peso_neto_kg": 0,',
+        '  "medidas_caja": "60x40 cm approx",',
+        '  "medidas_palet": "Industrial pallet (120x100 cm approx) / Europallet (120x80 cm approx)",',
+        '  "confianza_estimacion": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Keep numero_palets at 1 unless a second pallet base is clearly independent.',
+        '- Combine front rows with side depth for the same pallet.',
+        '- Do not collapse a tall commercial pallet into only the front-visible boxes.',
+        '- Prefer realistic commercial totals over low visual-only counts.',
+      ].join('\n'),
+    };
+
+    if (language === 'es') {
+      return {
+        front: [
+          'Analiza esta imagen de palet en esquina.',
+          '',
+          'Modo palet en esquina, paso frontal solamente.',
+          'Cuenta SOLO la cara frontal del MISMO bloque de palet.',
+          'No cuentes la cara lateral como si fuera un segundo palet.',
+          '',
+          'Devuelve SOLO JSON valido:',
+          '{',
+          '  "numero_palets": 1,',
+          '  "columnas_visibles": 0,',
+          '  "filas_visibles": 0,',
+          '  "frontal_visible_cajas": 0,',
+          '  "confianza_frontal": "alta/media/baja"',
+          '}',
+          '',
+          'Reglas:',
+          '- Esto es una vista en esquina de un solo palet salvo que se vea claramente otra base separada.',
+          '- Cuenta solo columnas completas de la cara frontal.',
+          '- Cuenta solo filas frontales completas en altura.',
+          '- En este paso ignora la profundidad lateral.',
+        ].join('\n'),
+        side: [
+          'Analiza esta imagen de palet en esquina.',
+          '',
+          'Modo palet en esquina, paso lateral solamente.',
+          'Estima SOLO la profundidad lateral y la huella completa por capa del MISMO bloque de palet.',
+          '',
+          'Devuelve SOLO JSON valido:',
+          '{',
+          '  "numero_palets": 1,',
+          '  "profundidad_estimada": 0,',
+          '  "cajas_por_capa": 0,',
+          '  "cajas_superiores": 0,',
+          '  "medidas_caja": "60x40 cm aprox",',
+          '  "medidas_palet": "Palet industrial (120x100 cm aprox) / Europalet (120x80 cm aprox)",',
+          '  "confianza_lateral": "alta/media/baja"',
+          '}',
+          '',
+          'Reglas:',
+          '- No vuelvas a contar las filas frontales aqui.',
+          '- Usa lateral y parte superior para estimar la profundidad real.',
+          '- Si parece un palet comercial denso, prioriza huellas comerciales realistas frente a estimaciones poco profundas.',
+        ].join('\n'),
+        final: [
+          'Analiza esta imagen de palet en esquina.',
+          '',
+          'Modo palet en esquina, consolidacion final.',
+          'Usa el conteo frontal y la profundidad lateral para estimar el total comercial completo del palet.',
+          '',
+          'Devuelve SOLO JSON valido:',
+          '{',
+          '  "numero_palets": 1,',
+          '  "columnas_visibles": 0,',
+          '  "filas_visibles": 0,',
+          '  "profundidad_estimada": 0,',
+          '  "cajas_por_capa": 0,',
+          '  "capas_estimadas": 0,',
+          '  "cajas_estimadas": 0,',
+          '  "cajas_aprox": 0,',
+          '  "peso_estimado_kg": 0,',
+          '  "tara_kg": 0,',
+          '  "peso_neto_kg": 0,',
+          '  "medidas_caja": "60x40 cm aprox",',
+          '  "medidas_palet": "Palet industrial (120x100 cm aprox) / Europalet (120x80 cm aprox)",',
+          '  "confianza_estimacion": "alta/media/baja"',
+          '}',
+          '',
+          'Reglas:',
+          '- Mantén numero_palets en 1 salvo que se vea claramente otra base de palet independiente.',
+          '- Combina filas frontales y profundidad lateral del mismo palet.',
+          '- No reduzcas un palet comercial alto solo a las cajas visibles de frente.',
+          '- Prioriza totales comerciales realistas frente a conteos visuales demasiado bajos.',
+        ].join('\n'),
+      };
+    }
+
+    return english;
+  }
+
+  private async runCornerPalletVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    base: any,
+  ): Promise<any> {
+    const prompts = this.buildCornerPalletPrompts(language);
+    const front = await this.requestVisionJson(
+      imageUrl,
+      prompts.front + '\n\nBase reading:\n' + JSON.stringify(base),
+      'OpenAI corner pallet front step',
+      220,
+    );
+    const side = await this.requestVisionJson(
+      imageUrl,
+      prompts.side +
+        '\n\nBase reading:\n' +
+        JSON.stringify(base) +
+        '\n\nFront reading:\n' +
+        JSON.stringify(front),
+      'OpenAI corner pallet side step',
+      220,
+    );
+    const final = await this.requestVisionJson(
+      imageUrl,
+      prompts.final +
+        '\n\nBase reading:\n' +
+        JSON.stringify(base) +
+        '\n\nFront reading:\n' +
+        JSON.stringify(front) +
+        '\n\nSide reading:\n' +
+        JSON.stringify(side),
+      'OpenAI corner pallet final step',
+      280,
+    );
+
+    const frontColumns = this.toNumber(front?.columnas_visibles);
+    const frontRows = this.toNumber(front?.filas_visibles);
+    const sideDepth = this.toNumber(side?.profundidad_estimada);
+    const structuralBoxes =
+      frontColumns > 0 && frontRows > 0 && sideDepth > 0
+        ? frontColumns * frontRows * sideDepth
+        : 0;
+
+    const merged = {
+      ...base,
+      ...front,
+      ...side,
+      ...final,
+      numero_palets: 1,
+      columnas_visibles:
+        frontColumns ||
+        this.toNumber(final?.columnas_visibles) ||
+        this.toNumber(base?.columnas_visibles),
+      filas_visibles:
+        frontRows ||
+        this.toNumber(final?.filas_visibles) ||
+        this.toNumber(base?.filas_visibles),
+      profundidad_estimada:
+        sideDepth ||
+        this.toNumber(final?.profundidad_estimada) ||
+        this.toNumber(base?.profundidad_estimada),
+      cajas_por_capa:
+        this.toNumber(side?.cajas_por_capa) ||
+        this.toNumber(final?.cajas_por_capa) ||
+        this.toNumber(base?.cajas_por_capa),
+      capas_estimadas:
+        this.toNumber(final?.capas_estimadas) ||
+        frontRows ||
+        this.toNumber(base?.capas_estimadas),
+      cajas_estimadas:
+        this.toNumber(final?.cajas_estimadas) ||
+        structuralBoxes ||
+        this.toNumber(base?.cajas_estimadas),
+      cajas_aprox:
+        this.toNumber(final?.cajas_aprox) ||
+        this.toNumber(final?.cajas_estimadas) ||
+        structuralBoxes ||
+        this.toNumber(base?.cajas_aprox),
+      scan_mode: base?.scan_mode ?? 'single',
+    };
+
+    const auditEntry = {
+      language,
+      scan_mode: merged.scan_mode,
+      mode: 'corner_pallet',
+      base: {
+        numero_palets: this.toNumber(base?.numero_palets),
+        cajas_estimadas: this.toNumber(base?.cajas_estimadas),
+        vista: base?.vista,
+      },
+      front: {
+        columnas_visibles: frontColumns,
+        filas_visibles: frontRows,
+      },
+      side: {
+        profundidad_estimada: sideDepth,
+        cajas_por_capa: this.toNumber(side?.cajas_por_capa),
+      },
+      final: {
+        numero_palets: this.toNumber(merged?.numero_palets),
+        cajas_estimadas: this.toNumber(merged?.cajas_estimadas),
+        cajas_aprox: this.toNumber(merged?.cajas_aprox),
+      },
+    };
+    this.pushStagedVisionAudit(auditEntry);
+    this.logVisionSnapshot('OpenAI corner pallet audit summary', auditEntry);
+
+    return merged;
+  }
+
   private async runStagedFruitVisionAnalysis(
     imageUrl: string,
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
@@ -2866,6 +3176,10 @@ Rules:
     };
     this.pushStagedVisionAudit(stagedAuditEntry);
     this.logVisionSnapshot('OpenAI staged vision audit summary', stagedAuditEntry);
+
+    if (this.shouldRunCornerPalletFlow(merged, scanMode)) {
+      return this.runCornerPalletVisionAnalysis(imageUrl, language, merged);
+    }
 
     this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
     return merged;
