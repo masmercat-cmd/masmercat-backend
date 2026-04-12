@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Req, UseGuards, Delete } from '@nestjs/common';
+import { Controller, Post, Body, Get, Req, UseGuards, Delete, Query } from '@nestjs/common';
 import type { Request } from 'express';
 import { AiService, ChatMessageDto, TransportTariffDto } from './ai.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -191,6 +191,18 @@ if (!image) {
     } catch (err: any) {
       console.log('❌ ERROR deleteSavedScan:', err?.message || err);
       return { ok: false, error: err?.message || 'Error interno borrando cambios' };
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('audit/weight-adjustments')
+  async getWeightAdjustmentAudit(@Query('limit') limit?: string) {
+    try {
+      const results = this.aiService.getRecentWeightAdjustmentAudit(Number(limit ?? 20));
+      return { ok: true, count: results.length, results };
+    } catch (err: any) {
+      console.log('âŒ ERROR getWeightAdjustmentAudit:', err?.message || err);
+      return { ok: false, error: err?.message || 'Error interno cargando auditoria' };
     }
   }
 }

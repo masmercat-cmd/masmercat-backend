@@ -33,6 +33,7 @@ export class AiService {
     string,
     { result: any; expiresAt: number }
   >();
+  private readonly weightAdjustmentAudit: Array<Record<string, any>> = [];
 
   private logVisionSnapshot(label: string, payload: any): void {
     try {
@@ -40,6 +41,22 @@ export class AiService {
     } catch {
       console.log(`📦 ${label}:`, payload);
     }
+  }
+
+  private pushWeightAdjustmentAudit(entry: Record<string, any>): void {
+    this.weightAdjustmentAudit.unshift({
+      createdAt: new Date().toISOString(),
+      ...entry,
+    });
+
+    if (this.weightAdjustmentAudit.length > 100) {
+      this.weightAdjustmentAudit.length = 100;
+    }
+  }
+
+  getRecentWeightAdjustmentAudit(limit: number = 20): Array<Record<string, any>> {
+    const normalizedLimit = this.clamp(Math.round(this.toNumber(limit) || 20), 1, 100);
+    return this.weightAdjustmentAudit.slice(0, normalizedLimit);
   }
 
   private toNumber(value: any): number {
@@ -66,6 +83,17 @@ export class AiService {
 
   private normalizeProducto(value: any): string {
     return `${value ?? ''}`.trim().toLowerCase();
+  }
+
+  private resolveVisionPromptLanguage(
+    language: string,
+  ): 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi' {
+    const code = `${language ?? 'es'}`.trim().toLowerCase().substring(0, 2);
+    if (['es', 'en', 'fr', 'de', 'pt', 'ar', 'zh', 'hi'].includes(code)) {
+      return code as 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi';
+    }
+
+    return 'es';
   }
 
   private normalizeMeasure(value: any): string {
@@ -889,6 +917,45 @@ export class AiService {
     return 18;
   }
 
+  private clampCommercialGrossWeightKg(
+    aiGrossWeight: number,
+    estimatedNetWeight: number,
+    tareWeight: number,
+    options?: { isPalot?: boolean; likelyWarehouseBatch?: boolean },
+  ): { grossWeight: number; corrected: boolean; estimatedGross: number } {
+    const estimatedGross = Math.max(0, estimatedNetWeight + tareWeight);
+    if (aiGrossWeight <= 0) {
+      return {
+        grossWeight: Number(estimatedGross.toFixed(2)),
+        corrected: estimatedGross > 0,
+        estimatedGross: Number(estimatedGross.toFixed(2)),
+      };
+    }
+
+    const lowerRatio = options?.likelyWarehouseBatch ? 0.82 : 0.7;
+    const upperRatio = options?.likelyWarehouseBatch ? 1.18 : 1.35;
+    const lowerBound = options?.isPalot
+      ? Math.max(estimatedGross * 0.75, estimatedGross - 140)
+      : estimatedGross * lowerRatio;
+    const upperBound = options?.isPalot
+      ? Math.max(estimatedGross * 1.2, estimatedGross + 140)
+      : estimatedGross * upperRatio;
+
+    if (aiGrossWeight < lowerBound || aiGrossWeight > upperBound) {
+      return {
+        grossWeight: Number(estimatedGross.toFixed(2)),
+        corrected: true,
+        estimatedGross: Number(estimatedGross.toFixed(2)),
+      };
+    }
+
+    return {
+      grossWeight: Number(aiGrossWeight.toFixed(2)),
+      corrected: false,
+      estimatedGross: Number(estimatedGross.toFixed(2)),
+    };
+  }
+
   private isWarehouseStyleView(
     parsed: any,
     envase: string,
@@ -922,6 +989,147 @@ export class AiService {
       (blockCount >= 6) ||
       totalBoxes >= 160
     );
+  }
+
+  private isSingleCornerPalletView(parsed: any, envase: string): boolean {
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi') {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const explicitCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+
+    return (
+      ['diagonal', 'lateral', 'frontal', 'side', 'front'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleRows >= 10 &&
+      visibleColumns > 0 &&
+      visibleColumns <= 3 &&
+      estimatedDepth <= 2 &&
+      topBoxes <= 8 &&
+      explicitCount >= 2 &&
+      explicitCount <= 2 &&
+      totalBoxes <= 120
+    );
+  }
+
+  private applyPalletSceneCorrections(parsed: any, envase: string): any {
+    if (!envase.includes('palet')) {
+      return parsed;
+    }
+
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const explicitCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const warehouseLike =
+      this.isWarehouseStyleView(parsed, envase, totalBoxes) ||
+      view.includes('almacen') ||
+      view.includes('warehouse') ||
+      view.includes('superior') ||
+      view.includes('top');
+
+    if (this.isSingleCornerPalletView(parsed, envase)) {
+      parsed.numero_palets = 1;
+      parsed.pallet_count = 1;
+      parsed.bloques_palets_visibles = 1;
+      parsed.columnas_palets_visibles = 1;
+      parsed.filas_palets_visibles = 1;
+    }
+
+    const likelyHalfWarehouseGrid =
+      warehouseLike &&
+      explicitCount >= 10 &&
+      explicitCount <= 14 &&
+      (visibleRows <= 4 || topBoxes >= 10 || `${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi');
+
+    if (likelyHalfWarehouseGrid) {
+      const doubledCount = Math.min(24, explicitCount * 2);
+      parsed.numero_palets = Math.max(this.toNumber(parsed.numero_palets), doubledCount);
+      parsed.pallet_count = Math.max(this.toNumber(parsed.pallet_count), doubledCount);
+      parsed.bloques_palets_visibles = Math.max(
+        this.toNumber(parsed.bloques_palets_visibles),
+        doubledCount,
+      );
+    }
+
+    return parsed;
+  }
+
+  private applySingleCornerBoxCorrection(
+    parsed: any,
+    envase: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    if (!this.isSingleCornerPalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const minimumCommercialDepth = likelyIndustrial
+      ? visibleColumns <= 2
+        ? 4
+        : 3
+      : visibleColumns <= 2
+        ? 3
+        : 2;
+    const correctedDepth = Math.max(estimatedDepth, minimumCommercialDepth);
+    const correctedBoxes =
+      visibleColumns > 0 && visibleRows > 0
+        ? visibleColumns * visibleRows * correctedDepth
+        : estimatedBoxes;
+
+    parsed.profundidad_estimada = correctedDepth;
+    parsed.cajas_por_capa = Math.max(
+      this.toNumber(parsed?.cajas_por_capa),
+      visibleColumns * correctedDepth,
+    );
+    parsed.capas_estimadas = Math.max(
+      this.toNumber(parsed?.capas_estimadas),
+      visibleRows,
+    );
+
+    return Math.max(estimatedBoxes, correctedBoxes);
   }
 
   private inferPalletCount(parsed: any, envase: string): number {
@@ -1048,9 +1256,12 @@ export class AiService {
       parsed.envase = 'sin caja';
     }
 
+    parsed = this.applyPalletSceneCorrections(parsed, envase);
+
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
     const palletCount = this.inferPalletCount(parsed, envase);
+    boxes = this.applySingleCornerBoxCorrection(parsed, envase, boxes, palletCount);
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
     const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
@@ -1107,10 +1318,13 @@ export class AiService {
       palletCount >= 8 && this.isWarehouseStyleView(parsed, envase, boxes);
 
     let netProductWeight = aiGrossWeight;
+    let structuralNetWeight = 0;
     if (isPalot) {
-      netProductWeight = Math.max(aiGrossWeight, 280);
+      structuralNetWeight = Math.max(aiGrossWeight, 280);
+      netProductWeight = structuralNetWeight;
     } else if (boxes > 0) {
       const estimatedNet = boxes * boxWeightKg;
+      structuralNetWeight = Number(estimatedNet.toFixed(2));
       if (aiGrossWeight > 0) {
         const estimatedGrossWithTare = estimatedNet + tareWeight;
         const ratio =
@@ -1137,9 +1351,32 @@ export class AiService {
       );
     }
 
-    const grossWeight = Number(
-      Math.max(netProductWeight + tareWeight, aiGrossWeight).toFixed(2),
+    const commercialReferenceNet = Math.max(netProductWeight, structuralNetWeight);
+    const grossWeightDecision = this.clampCommercialGrossWeightKg(
+      aiGrossWeight,
+      commercialReferenceNet,
+      tareWeight,
+      { isPalot, likelyWarehouseBatch },
     );
+    const grossWeight = Number(grossWeightDecision.grossWeight.toFixed(2));
+
+    if (grossWeightDecision.corrected) {
+      const auditEntry = {
+        producto,
+        envase,
+        numero_palets: palletCount,
+        cajas_estimadas: boxes,
+        ai_peso_bruto_kg: Number(aiGrossWeight.toFixed(2)),
+        peso_bruto_estructural_kg: grossWeightDecision.estimatedGross,
+        peso_bruto_final_kg: grossWeight,
+        peso_neto_referencia_kg: Number(commercialReferenceNet.toFixed(2)),
+        tara_kg: Number(tareWeight.toFixed(2)),
+        likelyWarehouseBatch,
+        isPalot,
+      };
+      this.pushWeightAdjustmentAudit(auditEntry);
+      this.logVisionSnapshot('Adjusted inconsistent gross weight', auditEntry);
+    }
 
     parsed.peso_bruto_kg = Number(grossWeight.toFixed(2));
     parsed.peso_estimado_kg = Number(grossWeight.toFixed(2));
@@ -1910,392 +2147,515 @@ Rules:
     language: string = 'es',
     options?: { imagePath?: string; fastMode?: boolean; scanMode?: 'single' | 'multi' },
   ): Promise<any> {
-  // Limpieza y normalización
-  let img = (base64Image || '').trim();
+    let img = (base64Image || '').trim();
+    img = img.replace(/^data:image\/\w+;base64,/, '');
+    const imageHash = this.buildImageHash(img);
+    const savedCorrection = await this.findSavedCorrection(
+      imageHash,
+      options?.imagePath,
+    );
 
-  // Si viene como data URL, lo convertimos a base64 puro
-  img = img.replace(/^data:image\/\w+;base64,/, '');
-  const imageHash = this.buildImageHash(img);
-  const savedCorrection = await this.findSavedCorrection(
-    imageHash,
-    options?.imagePath,
-  );
+    if (savedCorrection) {
+      const restored = this.mapSavedScanResult(savedCorrection);
+      this.logVisionSnapshot('Reused saved scan correction', restored);
+      return restored;
+    }
 
-  if (savedCorrection) {
-    const restored = this.mapSavedScanResult(savedCorrection);
-    this.logVisionSnapshot('Reused saved scan correction', restored);
-    return restored;
+    const cachedAnalysis = this.getCachedImageAnalysis(imageHash);
+    if (cachedAnalysis) {
+      cachedAnalysis.image_hash = imageHash;
+      cachedAnalysis.image_path = options?.imagePath ?? cachedAnalysis.image_path ?? null;
+      this.logVisionSnapshot('Reused cached image analysis', cachedAnalysis);
+      return cachedAnalysis;
+    }
+
+    const lang = this.resolveVisionPromptLanguage(language || 'es');
+    const requestedScanMode =
+      options?.scanMode === 'multi' ? 'multi' : 'single';
+
+    console.log('analyzeFruitImage staged lang:', lang);
+    console.log('analyzeFruitImage base64 length:', img.length);
+    console.log('analyzeFruitImage first chars:', img.slice(0, 20));
+
+    try {
+      console.log('Calling OpenAI (attempt A, staged vision)...');
+      console.time('openai_attempt_A');
+      let parsed = await this.runStagedFruitVisionAnalysis(
+        'data:image/jpeg;base64,' + img,
+        lang,
+        requestedScanMode,
+      );
+      console.timeEnd('openai_attempt_A');
+      console.log('OpenAI responded (attempt A)');
+
+      if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
+        parsed = await this.refinePalletEstimate(img, parsed, lang);
+      }
+      if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
+        parsed = await this.zoneRecountPallets(img, parsed);
+      }
+
+      let finalized = this.finalizeVisionResult(parsed);
+      const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
+      if (learnedPattern) {
+        finalized = this.applyPatternCorrection(finalized, learnedPattern);
+        this.logVisionSnapshot('Applied pallet pattern correction', {
+          learnedFromId: learnedPattern.id,
+          cajas_estimadas: finalized.cajas_estimadas,
+        });
+      }
+
+      finalized.image_hash = imageHash;
+      finalized.image_path = options?.imagePath ?? null;
+      this.cacheImageAnalysis(imageHash, finalized);
+      this.logVisionSnapshot('Final pallet result attempt A', finalized);
+      return finalized;
+    } catch (error: any) {
+      console.error('Vision attempt A (data URL) error:', error?.message || error);
+      console.error('details:', error?.response?.data || error?.response || error);
+    }
+
+    try {
+      console.log('Calling OpenAI (attempt B, staged vision)...');
+      console.time('openai_attempt_B');
+      let parsed = await this.runStagedFruitVisionAnalysis(
+        img,
+        lang,
+        requestedScanMode,
+      );
+      console.timeEnd('openai_attempt_B');
+      console.log('OpenAI responded (attempt B)');
+
+      if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
+        parsed = await this.refinePalletEstimate(img, parsed, lang);
+      }
+      if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
+        parsed = await this.zoneRecountPallets(img, parsed);
+      }
+
+      let finalized = this.finalizeVisionResult(parsed);
+      const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
+      if (learnedPattern) {
+        finalized = this.applyPatternCorrection(finalized, learnedPattern);
+        this.logVisionSnapshot('Applied pallet pattern correction', {
+          learnedFromId: learnedPattern.id,
+          cajas_estimadas: finalized.cajas_estimadas,
+        });
+      }
+
+      finalized.image_hash = imageHash;
+      finalized.image_path = options?.imagePath ?? null;
+      this.cacheImageAnalysis(imageHash, finalized);
+      this.logVisionSnapshot('Final pallet result attempt B', finalized);
+      return finalized;
+    } catch (error: any) {
+      console.error('Vision attempt B (raw base64) error:', error?.message || error);
+      console.error('details:', error?.response?.data || error?.response || error);
+      throw error;
+    }
   }
 
-  const cachedAnalysis = this.getCachedImageAnalysis(imageHash);
-  if (cachedAnalysis) {
-    cachedAnalysis.image_hash = imageHash;
-    cachedAnalysis.image_path = options?.imagePath ?? cachedAnalysis.image_path ?? null;
-    this.logVisionSnapshot('Reused cached image analysis', cachedAnalysis);
-    return cachedAnalysis;
-  }
-
-  const prompts: any = {
-    es: `Analiza esta imagen de frutas o verduras.
-
-Usa terminología agrícola de España para los nombres de frutas.
-
-IMPORTANTE:
-Distingue correctamente entre estos productos:
-- melocotón = fruta redonda con piel aterciopelada
-- paraguayo = melocotón plano
-- nectarina = fruta redonda con piel lisa
-
-Si identificas "durazno", debes devolver "melocotón".
-
-Objetivo:
-Debes analizar el lote de forma visual y estructurada. No des una cifra simple sin justificarla visualmente.
-
-Identifica:
-
-1. Categoría del producto:
-   - fruta
-   - verdura
-   - hongo
-
-2. Producto específico:
-   - melocotón
-   - paraguayo
-   - nectarina
-   - kiwi
-   - berenjena
-   - trufa
-   - etc.
-
-	3. Tipo de envase detectado:
-	   - sin caja
-	   - caja
-	   - varias cajas
-	   - palet con cajas
-	   - palot
-
-	Si solo ves fruta suelta o una sola fruta sin caja, devuelve:
-	- "envase": "sin caja"
-	- "cajas_estimadas": 0
-	- "piezas_por_caja": 0
-	- "cantidad_total_piezas": el numero visible de frutas en la foto
-
-4. Material del envase o caja si se aprecia:
-   - cartón
-   - madera
-   - plástico
-   - desconocido4
-
-5. Si el envase es "palet con cajas", analiza así:
-- SIEMPRE estima el total del palet completo, no solo lo visible de frente
-- Cuenta como lo haría una persona mirando la foto:
-  1) columnas visibles delante
-  2) filas visibles en altura
-  3) profundidad visible en el lateral
-  4) multiplica frente x profundidad
-- Si en la foto aparecen varios palets, cuenta cuántos palets completos o casi completos hay
-- En ese caso, "numero_palets" debe ser el total de palets visibles y "cajas_estimadas" debe ser la suma de todos los palets, no solo uno
-- Si la foto es desde arriba, diagonal o de almacén, cuenta huellas o bloques de palet visibles en el suelo
-- En esas vistas, estima también:
-  - "columnas_palets_visibles" = cuántos palets o bloques ves a lo ancho
-  - "filas_palets_visibles" = cuántos palets o bloques ves hacia el fondo
-  - "bloques_palets_visibles" = total de palets visibles si la cuadrícula no es perfecta
-- No agrupes varios palets cercanos como si fueran un solo palet
-- Si hay varias capas en profundidad, multiplícalas
-- Si hay cajas encima, súmalas aparte
-- Si dudas entre varios valores, elige el MAYOR coherente
-- NUNCA devuelvas solo la cara frontal
-
-El valor de "cajas_estimadas" debe representar el TOTAL REAL del palet completo.
-Ejemplo: si ves 6x4 cajas delante y estimas 3 capas → devuelve ~72, no 24.
-
-- cuenta columnas visibles en la cara frontal
-- cuenta filas visibles en altura (niveles)
-- identifica si hay profundidad (segunda fila o cara lateral visible)
-- asume profundidad mínima de 1, pero aumenta si se ve lateral o volumen
-
-Debes calcular SIEMPRE con fórmula:
-
-- cajas_frente = columnas × filas
-- profundidad = número de filas hacia atrás (mínimo 1)
-- cajas_totales = cajas_frente × profundidad
-
-Ejemplo humano:
-- si delante ves 8 columnas x 5 filas = 40
-- y en el lateral se aprecian 4 cajas de profundidad
-- el total debe quedar cerca de 160, no 300 ni 400
-
-IMPORTANTE:
-- NO devuelvas solo las cajas visibles de frente
-- SIEMPRE estima volumen completo del palet
-- Si se ve lateral o parte superior, aumenta profundidad
-- Si el palet es alto, aumenta filas
-- Si parece lleno, evita números bajos
-- Es mejor aproximar alto que quedarse corto
-
-6. Si es palot:
-   - estima el peso aproximado del palot lleno
-
-7. Calibre aproximado:
-   - 1, 2, 3, 4, 5, 6, A, B si aplica
-
-8. Piezas por caja:
-   - estima piezas_por_caja si se puede
-   - si no se puede, usa un valor razonable según el tamaño visual del fruto
-
-9. Cantidad total:
-   - calcula cantidad_total_piezas = cajas_estimadas × piezas_por_caja cuando aplique
-
-10. Peso estimado total en kg basado en:
-   - tipo de envase
-   - número estimado de cajas o palots
-   - peso típico por caja
-   - tamaño visual del producto
-
-11. Calidad visual aproximada:
-   - extra
-   - primera
-   - segunda
-
-12. Medidas de caja:
-   - si pueden inferirse con bastante seguridad, devuelve algo como "60x40 cm aprox"
-   - si no es fiable, devuelve "por confirmar"
-
-13. Confianza de la estimación:
-   - alta
-   - media
-   - baja
-
-Ejemplos:
-- durazno = melocotón
-- frutilla = fresa
-- palta = aguacate
-- ananá = piña
-
-Responde SOLO en JSON válido, sin texto adicional, con estas claves exactas:
-{
-  "categoria": "fruta/verdura/hongo",
-  "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",
-	  "envase": "sin caja/caja/varias cajas/palet con cajas/palot",
-  "material_caja": "carton/madera/plastico/desconocido",
-  "columnas_visibles": 0,
-  "filas_visibles": 0,
-  "cajas_por_capa": 0,
-  "capas_estimadas": 0,
-  "cajas_aprox": 0,
-  "cajas_superiores": 0,
-  "cajas_estimadas": 0,
-  "columnas_palets_visibles": 0,
-  "filas_palets_visibles": 0,
-  "bloques_palets_visibles": 0,
-  "piezas_por_caja": 0,
-  "cantidad_total_piezas": 0,
-  "cantidad_aprox": 0,
-  "calibre": "1/2/3/4/5/6/A/B",
-  "peso_estimado_kg": 0,
-  "tara_kg": 0,
-  "peso_neto_kg": 0,
-  "numero_palets": 0,
-  "calidad": "extra/primera/segunda",
-  "medidas_caja": "por confirmar",
-  "medidas_palet": "por confirmar",
-  "confianza_estimacion": "alta/media/baja"
-}`,
-
-en: `Analyze this fruit or vegetable image.
-
-Identify:
-1. Fruit type
-2. Approximate size (caliber)
-3. Estimate the total number of boxes on the whole pallet using structural counting:
- - count visible boxes on the front face
- - count visible boxes on the side face
- - estimate boxes per layer
- - estimate number of layers in height
- - infer hidden boxes from pallet depth and width
- - determine whether it is half pallet, europallet (120x80), or industrial pallet (120x100)
- - if the pallet is full and densely stacked, prefer a realistic commercial total instead of a low visual-only count
-- if several pallets are visible, count them and return the total box count for all visible pallets
-- if the image is top-down, diagonal, or warehouse-style, count pallet footprints or distinct pallet blocks on the floor
-- in those views also estimate:
-  - "columnas_palets_visibles" = pallets across
-  - "filas_palets_visibles" = pallets deep
-  - "bloques_palets_visibles" = total visible pallet blocks when the grid is irregular
-- do not merge nearby pallets into one pallet
-4. Estimate pieces per box
-5. Estimated total weight in kg
-6. Quality (extra, first, second)
-	7. Packaging type (without box, box, pallet with boxes, loose)
-8. Box dimensions (e.g. "60x40 cm approx")
-9. Pallet dimensions if present (e.g. "120x100 cm approx")
-
-Respond ONLY in JSON with these keys:
-{
-   "fruta": "orange/lemon/etc",
-  "calibre": "1/2/3/A/B",
-  "cajas_estimadas": 184,
-  "columnas_palets_visibles": 0,
-  "filas_palets_visibles": 0,
-  "bloques_palets_visibles": 0,
-  "piezas_por_caja": 20,
-  "cantidad_total_piezas": 3680,
-  "peso_estimado_kg": 920,
-  "calidad": "extra/first/second",
-  "envase": "box / pallet with boxes",
-  "medidas_caja": "60x40 cm approx",
-  "medidas_palet": "120x100 cm approx",
-  "numero_palets": 1
-}
-
-IMPORTANT:
-- If a pallet is visible, ALWAYS estimate pallet dimensions.
-- If boxes are visible, ALWAYS estimate box dimensions.
-- Never return "por confirmar".
-- Always give an approximate value even if uncertain.
-- Estimate box count structurally, not loosely.
-- Count as a human operator would:
-  1) front columns
-  2) front rows in height
-  3) side depth
-  4) total = front face x depth
-- If more than one pallet is visible, count the pallets first and then return the total number of boxes across all pallets.
-- For top-down or warehouse views, count pallet footprints on the floor before estimating boxes.
-- Use visible rows and columns on the front and side faces to infer total boxes.
-- Infer hidden boxes that are not directly visible when the pallet depth suggests more boxes.
-- If the pallet is full height and densely stacked, avoid low counts.
-- Prefer realistic commercial pallet counts for fruit boxes.
-- If the visible structure suggests around 160 boxes, do not jump to 300-400 without clear visual proof.
-	- If the image only shows loose fruit or a single fruit without packaging, return packaging as "without box", set cajas_estimadas to 0 and set cantidad_total_piezas to the visible fruit count.
-	- Return cajas_estimadas as the total estimated number of boxes on the whole pallet.
-- Do not count only the front-visible boxes.
-- For full pallets, prioritize total pallet structure over partial face visibility.
-`,
-};
-
-  const lang = (language || 'es').substring(0, 2);
-  const prompt = prompts[lang] || prompts.es;
-  const requestedScanMode =
-    options?.scanMode === 'multi' ? 'multi' : 'single';
-
-  console.log('🧠 analyzeFruitImage lang:', lang);
-  console.log('🧠 analyzeFruitImage base64 length:', img.length);
-  console.log('🧠 analyzeFruitImage first chars:', img.slice(0, 20));
-
-  // Intento A: data URL (lo más común)
-  try {
-    console.log('➡️ Llamando a OpenAI (attempt A)...');
-    console.time('openai_attempt_A');
-
+  private async requestVisionJson(
+    imageUrl: string,
+    prompt: string,
+    label: string,
+    maxTokens: number,
+  ): Promise<any> {
     const completion = await this.openai.chat.completions.create({
-    model: 'gpt-4o',
-    response_format: { type: 'json_object' },
-    messages: [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: prompt },
+      model: 'gpt-4o',
+      response_format: { type: 'json_object' },
+      messages: [
         {
-          type: 'image_url',
-          image_url: {
-            url: `data:image/jpeg;base64,${img}`,
-          },
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: imageUrl } },
+          ],
         },
       ],
-    },
-  ],
-  max_tokens: 300,
-  temperature: 0,
-});
-    console.timeEnd('openai_attempt_A');
-    console.log('✅ OpenAI respondió (attempt A)');
+      max_tokens: maxTokens,
+      temperature: 0,
+    });
 
     const response = completion.choices[0]?.message?.content || '{}';
-    console.log('📨 OpenAI content (attempt A):', response);
-    console.log('📨 OpenAI parsed JSON:', JSON.parse(response));
-    
-    let parsed = JSON.parse(response);
-    parsed.scan_mode = requestedScanMode;
-    this.logVisionSnapshot('OpenAI attempt A raw JSON', parsed);
-    if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
-      parsed = await this.refinePalletEstimate(img, parsed, lang);
+    const parsed = JSON.parse(response);
+    this.logVisionSnapshot(label, parsed);
+    return parsed;
+  }
+
+  private buildStagedVisionPrompts(
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    switch (language) {
+      case 'en':
+        return this.buildEnglishVisionPrompts(scanMode);
+      case 'fr':
+        return this.buildFrenchVisionPrompts(scanMode);
+      case 'de':
+        return this.buildGermanVisionPrompts(scanMode);
+      case 'pt':
+        return this.buildPortugueseVisionPrompts(scanMode);
+      case 'ar':
+        return this.buildArabicVisionPrompts(scanMode);
+      case 'zh':
+        return this.buildChineseVisionPrompts(scanMode);
+      case 'hi':
+        return this.buildHindiVisionPrompts(scanMode);
+      case 'es':
+      default:
+        return this.buildSpanishVisionPrompts(scanMode);
     }
-    if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
-      parsed = await this.zoneRecountPallets(img, parsed);
-    }
-
-    let finalized = this.finalizeVisionResult(parsed);
-    const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
-    if (learnedPattern) {
-      finalized = this.applyPatternCorrection(finalized, learnedPattern);
-      this.logVisionSnapshot('Applied pallet pattern correction', {
-        learnedFromId: learnedPattern.id,
-        cajas_estimadas: finalized.cajas_estimadas,
-      });
-    }
-
-    finalized.image_hash = imageHash;
-    finalized.image_path = options?.imagePath ?? null;
-    this.cacheImageAnalysis(imageHash, finalized);
-    this.logVisionSnapshot('Final pallet result attempt A', finalized);
-    return finalized;
-  } catch (error: any) {
-    console.error('❌ Vision attempt A (data URL) error:', error?.message || error);
-    console.error('❌ details:', error?.response?.data || error?.response || error);
   }
 
-  // Intento B: base64 “puro” (por si el data URL falla en tu entorno)
-  
-try {
-  const completionResponse = await this.openai.chat.completions.create({
-    model: 'gpt-4o',
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: img } },
-        ],
-      },
-    ],
-    max_tokens: 500,
-    temperature: 0,
-  });
-
-  const response = completionResponse.choices[0]?.message?.content || '{}';
-  console.log('📄 OpenAI content (attempt B):', response);
-  console.log('📄 OpenAI parsed JSON:', JSON.parse(response));
-
-  let parsed = JSON.parse(response);
-  parsed.scan_mode = requestedScanMode;
-  this.logVisionSnapshot('OpenAI attempt B raw JSON', parsed);
-  if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
-    parsed = await this.refinePalletEstimate(img, parsed, lang);
+  private buildEnglishVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    return {
+      stage1: [
+        'Analyze this fruit or vegetable image.',
+        '',
+        'Step 1 only: identify the scene and visible packaging before estimating totals.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "categoria": "fruit/vegetable/mushroom",',
+        '  "producto": "peach/flat peach/nectarine/kiwi/eggplant/truffle/etc",',
+        '  "envase": "without box/box/multiple boxes/pallet with boxes/palox",',
+        '  "material_caja": "cardboard/wood/plastic/unknown",',
+        '  "vista": "closeup/front/side/top/diagonal/warehouse",',
+        '  "hay_palet": true,',
+        '  "hay_cajas": true,',
+        '  "numero_palets_visibles_base": 0,',
+        '  "fruta_suelta_visible": 0,',
+        '  "confianza_base": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Use agricultural naming.',
+        '- Map "durazno" to peach.',
+        '- Distinguish peach, flat peach and nectarine carefully.',
+        '- Do not estimate total boxes or weight yet.',
+        '- If the image shows loose fruit only, set envase to "without box".',
+      ].join('\n'),
+      stage2: [
+        'Analyze this fruit or vegetable image.',
+        '',
+        'Step 2 only: count the visible structure step by step, without commercial weight guesses.',
+        'Scan mode requested: ' + scanMode + '.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 0,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "medidas_caja": "60x40 cm approx",',
+        '  "medidas_palet": "120x80 cm approx",',
+        '  "confianza_estructura": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- First count pallets or pallet blocks.',
+        '- Then count front columns.',
+        '- Then front rows in height.',
+        '- Then estimate depth from side/top visibility.',
+        '- Compute cajas_por_capa from the layer footprint.',
+        '- Compute cajas_estimadas as the whole structure, not only the front face.',
+        '- If several pallets are visible, return the total estimated boxes across all visible pallets.',
+        '- For warehouse or top views, count pallet footprints before box totals.',
+      ].join('\n'),
+      stage3: [
+        'Analyze this fruit or vegetable image.',
+        '',
+        'Step 3 only: estimate commercial totals using the prior scene reading and structural count.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "categoria": "fruit/vegetable/mushroom",',
+        '  "producto": "peach/flat peach/nectarine/kiwi/eggplant/truffle/etc",',
+        '  "envase": "without box/box/multiple boxes/pallet with boxes/palox",',
+        '  "material_caja": "cardboard/wood/plastic/unknown",',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "piezas_por_caja": 0,',
+        '  "cantidad_total_piezas": 0,',
+        '  "cantidad_aprox": 0,',
+        '  "calibre": "1/2/3/4/5/6/A/B",',
+        '  "peso_estimado_kg": 0,',
+        '  "tara_kg": 0,',
+        '  "peso_neto_kg": 0,',
+        '  "numero_palets": 0,',
+        '  "calidad": "extra/first/second",',
+        '  "medidas_caja": "60x40 cm approx",',
+        '  "medidas_palet": "120x80 cm approx",',
+        '  "confianza_estimacion": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Base your answer on the previous scene classification and structural count.',
+        '- Do not restart from scratch.',
+        '- If fruit is loose, set cajas_estimadas and piezas_por_caja to 0 and count visible pieces.',
+        '- If pallets are visible, keep the total consistent with the counted structure.',
+        '- If the counted structure suggests a commercial box total, the weight must stay close to that structure and not jump far above or below it.',
+        '- Reject impossible gross weights when they do not fit the counted boxes, pallet count and packaging.',
+        '- Prefer coherent totals over broad guesses.',
+        '- Keep box count, pieces and weight internally consistent.',
+      ].join('\n'),
+    };
   }
-  if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
-    parsed = await this.zoneRecountPallets(img, parsed);
+
+  private buildSpanishVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    return {
+      stage1: [
+        'Analiza esta imagen de frutas o verduras.',
+        '',
+        'Paso 1 solamente: identifica el contexto visual antes de calcular cantidades.',
+        '',
+        'Devuelve SOLO JSON valido:',
+        '{',
+        '  "categoria": "fruta/verdura/hongo",',
+        '  "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/trufa/etc",',
+        '  "envase": "sin caja/caja/varias cajas/palet con cajas/palot",',
+        '  "material_caja": "carton/madera/plastico/desconocido",',
+        '  "vista": "detalle/frontal/lateral/superior/diagonal/almacen",',
+        '  "hay_palet": true,',
+        '  "hay_cajas": true,',
+        '  "numero_palets_visibles_base": 0,',
+        '  "fruta_suelta_visible": 0,',
+        '  "confianza_base": "alta/media/baja"',
+        '}',
+        '',
+        'Reglas:',
+        '- Usa terminologia agricola de Espana.',
+        '- Si identificas "durazno", devuelve "melocoton".',
+        '- Distingue bien melocoton, paraguayo y nectarina.',
+        '- Todavia no calcules cajas totales ni peso.',
+        '- Si solo ves fruta suelta, devuelve envase "sin caja".',
+      ].join('\n'),
+      stage2: [
+        'Analiza esta imagen de frutas o verduras.',
+        '',
+        'Paso 2 solamente: cuenta la estructura visible paso a paso, sin estimar todavia el peso comercial.',
+        'Modo solicitado: ' + scanMode + '.',
+        '',
+        'Devuelve SOLO JSON valido:',
+        '{',
+        '  "numero_palets": 0,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "medidas_caja": "60x40 cm aprox",',
+        '  "medidas_palet": "120x80 cm aprox",',
+        '  "confianza_estructura": "alta/media/baja"',
+        '}',
+        '',
+        'Reglas:',
+        '- Primero cuenta cuantos palets o bloques de palet hay.',
+        '- Luego cuenta columnas visibles en la cara frontal.',
+        '- Luego filas visibles en altura.',
+        '- Luego estima profundidad usando lateral y parte superior.',
+        '- Calcula cajas_por_capa con la huella de una capa.',
+        '- Calcula cajas_estimadas del volumen completo, no solo la cara frontal.',
+        '- Si hay varios palets, devuelve la suma de cajas estimadas de todos los palets visibles.',
+        '- En vistas de almacen o superiores, cuenta primero huellas de palet antes de estimar cajas.',
+      ].join('\n'),
+      stage3: [
+        'Analiza esta imagen de frutas o verduras.',
+        '',
+        'Paso 3 solamente: estima cantidades comerciales usando la lectura previa del contexto y del conteo estructural.',
+        '',
+        'Devuelve SOLO JSON valido:',
+        '{',
+        '  "categoria": "fruta/verdura/hongo",',
+        '  "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/etc",',
+        '  "envase": "sin caja/caja/varias cajas/palet con cajas/palot",',
+        '  "material_caja": "carton/madera/plastico/desconocido",',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "piezas_por_caja": 0,',
+        '  "cantidad_total_piezas": 0,',
+        '  "cantidad_aprox": 0,',
+        '  "calibre": "1/2/3/4/5/6/A/B",',
+        '  "peso_estimado_kg": 0,',
+        '  "tara_kg": 0,',
+        '  "peso_neto_kg": 0,',
+        '  "numero_palets": 0,',
+        '  "calidad": "extra/primera/segunda",',
+        '  "medidas_caja": "60x40 cm aprox",',
+        '  "medidas_palet": "120x80 cm aprox",',
+        '  "confianza_estimacion": "alta/media/baja"',
+        '}',
+        '',
+        'Reglas:',
+        '- Basa la respuesta en la identificacion previa y en el conteo estructural previo.',
+        '- No reinicies el analisis desde cero.',
+        '- Si la fruta esta suelta, pon cajas_estimadas y piezas_por_caja a 0 y cuenta solo las piezas visibles.',
+        '- Si hay palets, manten la coherencia con la estructura contada.',
+        '- Si la estructura contada sugiere un total comercial de cajas, el peso debe quedarse cerca de esa estructura y no dispararse por encima o por debajo.',
+        '- Descarta pesos brutos imposibles cuando no cuadren con las cajas contadas, el numero de palets y el envase.',
+        '- Prioriza cifras coherentes frente a estimaciones vagas.',
+        '- Manten consistencia interna entre cajas, piezas y peso.',
+      ].join('\n'),
+    };
   }
 
-  let finalized = this.finalizeVisionResult(parsed);
-  const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
-  if (learnedPattern) {
-    finalized = this.applyPatternCorrection(finalized, learnedPattern);
-    this.logVisionSnapshot('Applied pallet pattern correction', {
-      learnedFromId: learnedPattern.id,
-      cajas_estimadas: finalized.cajas_estimadas,
-    });
+  private buildFrenchVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    const prompts = this.buildEnglishVisionPrompts(scanMode);
+    return {
+      stage1: "Analyse cette image de fruits ou legumes.\n\nEtape 1 seulement : identifie la scene et l'emballage visible avant d'estimer les totaux.\n\n" + prompts.stage1.split('\n\n').slice(2).join('\n\n'),
+      stage2: "Analyse cette image de fruits ou legumes.\n\nEtape 2 seulement : compte la structure visible pas a pas, sans estimation commerciale du poids.\nMode demande : " + scanMode + ".\n\n" + prompts.stage2.split('\n\n').slice(2).join('\n\n'),
+      stage3: "Analyse cette image de fruits ou legumes.\n\nEtape 3 seulement : estime les totaux commerciaux en utilisant la lecture precedente de la scene et du comptage structurel.\n\n" + prompts.stage3.split('\n\n').slice(2).join('\n\n'),
+    };
   }
 
-  finalized.image_hash = imageHash;
-  finalized.image_path = options?.imagePath ?? null;
-  this.cacheImageAnalysis(imageHash, finalized);
-  this.logVisionSnapshot('Final pallet result attempt B', finalized);
-  return finalized;
-
-  } catch (error: any) {
-    console.error('❌ Vision attempt B (raw base64) error:', error?.message || error);
-    console.error('❌ details:', error?.response?.data || error?.response || error);
-    throw error;
+  private buildGermanVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    const prompts = this.buildEnglishVisionPrompts(scanMode);
+    return {
+      stage1: "Analysiere dieses Obst- oder Gemuesebild.\n\nSchritt 1: Erkenne zuerst Szene und sichtbare Verpackung, bevor du Gesamtsummen schaetzt.\n\n" + prompts.stage1.split('\n\n').slice(2).join('\n\n'),
+      stage2: "Analysiere dieses Obst- oder Gemuesebild.\n\nSchritt 2: Zaehle die sichtbare Struktur Schritt fuer Schritt, ohne kommerzielle Gewichtsschaetzung.\nAngeforderter Modus: " + scanMode + ".\n\n" + prompts.stage2.split('\n\n').slice(2).join('\n\n'),
+      stage3: "Analysiere dieses Obst- oder Gemuesebild.\n\nSchritt 3: Schaetze die kommerziellen Gesamtwerte anhand der vorherigen Szenen- und Strukturlesung.\n\n" + prompts.stage3.split('\n\n').slice(2).join('\n\n'),
+    };
   }
-}
+
+  private buildPortugueseVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    const prompts = this.buildSpanishVisionPrompts(scanMode);
+    return {
+      stage1: "Analisa esta imagem de frutas ou legumes.\n\nPasso 1 apenas: identifica o contexto visual antes de calcular quantidades.\n\n" + prompts.stage1.split('\n\n').slice(2).join('\n\n'),
+      stage2: "Analisa esta imagem de frutas ou legumes.\n\nPasso 2 apenas: conta a estrutura visivel passo a passo, sem estimar ainda o peso comercial.\nModo solicitado: " + scanMode + ".\n\n" + prompts.stage2.split('\n\n').slice(2).join('\n\n'),
+      stage3: "Analisa esta imagem de frutas ou legumes.\n\nPasso 3 apenas: estima quantidades comerciais usando a leitura previa do contexto e da estrutura.\n\n" + prompts.stage3.split('\n\n').slice(2).join('\n\n'),
+    };
+  }
+
+  private buildArabicVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    const prompts = this.buildEnglishVisionPrompts(scanMode);
+    return {
+      stage1: "حلل هذه الصورة للفواكه او الخضروات.\n\nالخطوة 1 فقط: حدد المشهد ونوع التغليف الظاهر قبل تقدير الاجماليات.\n\n" + prompts.stage1.split('\n\n').slice(2).join('\n\n'),
+      stage2: "حلل هذه الصورة للفواكه او الخضروات.\n\nالخطوة 2 فقط: عد البنية الظاهرة خطوة بخطوة بدون تقدير وزني تجاري.\nالوضع المطلوب: " + scanMode + ".\n\n" + prompts.stage2.split('\n\n').slice(2).join('\n\n'),
+      stage3: "حلل هذه الصورة للفواكه او الخضروات.\n\nالخطوة 3 فقط: قدر الاجماليات التجارية اعتمادا على قراءة المشهد والبنية السابقة.\n\n" + prompts.stage3.split('\n\n').slice(2).join('\n\n'),
+    };
+  }
+
+  private buildChineseVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    const prompts = this.buildEnglishVisionPrompts(scanMode);
+    return {
+      stage1: "分析这张水果或蔬菜图片。\n\n仅步骤1：先识别场景和可见包装，再估算总量。\n\n" + prompts.stage1.split('\n\n').slice(2).join('\n\n'),
+      stage2: "分析这张水果或蔬菜图片。\n\n仅步骤2：逐步统计可见结构，不要先做商业重量估算。\n请求模式：" + scanMode + "。\n\n" + prompts.stage2.split('\n\n').slice(2).join('\n\n'),
+      stage3: "分析这张水果或蔬菜图片。\n\n仅步骤3：基于前面的场景识别和结构计数来估算商业总量。\n\n" + prompts.stage3.split('\n\n').slice(2).join('\n\n'),
+    };
+  }
+
+  private buildHindiVisionPrompts(
+    scanMode: 'single' | 'multi',
+  ): { stage1: string; stage2: string; stage3: string } {
+    const prompts = this.buildEnglishVisionPrompts(scanMode);
+    return {
+      stage1:
+        'Is phal ya sabzi ki tasveer ka vishleshan karo.\n\nKadam 1 sirf: kul andaza lagane se pehle drishya aur dikhne wali packaging pehchano.\n\n' +
+        prompts.stage1.split('\n\n').slice(2).join('\n\n'),
+      stage2:
+        'Is phal ya sabzi ki tasveer ka vishleshan karo.\n\nKadam 2 sirf: bina vyaparik vajan andaze ke dikhne wali sanrachna ko step by step gino.\nMangaa gaya mode: ' +
+        scanMode +
+        '.\n\n' +
+        prompts.stage2.split('\n\n').slice(2).join('\n\n'),
+      stage3:
+        'Is phal ya sabzi ki tasveer ka vishleshan karo.\n\nKadam 3 sirf: pehle ke scene reading aur structural count ka upyog karke vyaparik totals ka andaza lagao.\n\n' +
+        prompts.stage3.split('\n\n').slice(2).join('\n\n'),
+    };
+  }
+
+  private async runStagedFruitVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    scanMode: 'single' | 'multi',
+  ): Promise<any> {
+    const prompts = this.buildStagedVisionPrompts(language, scanMode);
+    const stage1 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage1,
+      'OpenAI staged vision step 1',
+      220,
+    );
+    const stage2 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage2 + '\n\nLectura previa del paso 1:\n' + JSON.stringify(stage1),
+      'OpenAI staged vision step 2',
+      260,
+    );
+    const stage3 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage3 + '\n\nLectura previa del paso 1:\n' + JSON.stringify(stage1) + '\n\nLectura previa del paso 2:\n' + JSON.stringify(stage2),
+      'OpenAI staged vision step 3',
+      320,
+    );
+
+    const merged = {
+      ...stage1,
+      ...stage2,
+      ...stage3,
+      categoria: stage3?.categoria ?? stage1?.categoria,
+      producto: stage3?.producto ?? stage1?.producto ?? stage3?.fruta,
+      envase: stage3?.envase ?? stage1?.envase,
+      material_caja: stage3?.material_caja ?? stage1?.material_caja,
+      numero_palets:
+        this.toNumber(stage3?.numero_palets) ||
+        this.toNumber(stage2?.numero_palets) ||
+        this.toNumber(stage1?.numero_palets_visibles_base),
+      cajas_estimadas:
+        this.toNumber(stage3?.cajas_estimadas) ||
+        this.toNumber(stage2?.cajas_estimadas),
+      cajas_aprox:
+        this.toNumber(stage3?.cajas_aprox) ||
+        this.toNumber(stage3?.cajas_estimadas) ||
+        this.toNumber(stage2?.cajas_estimadas),
+      scan_mode: scanMode,
+    };
+
+    this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
+    return merged;
+  }
 }
