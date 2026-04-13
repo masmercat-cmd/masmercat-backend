@@ -2406,24 +2406,6 @@ Rules:
     let img = (base64Image || '').trim();
     img = img.replace(/^data:image\/\w+;base64,/, '');
     const imageHash = this.buildImageHash(img);
-    const savedCorrection = await this.findSavedCorrection(
-      imageHash,
-      options?.imagePath,
-    );
-
-    if (savedCorrection) {
-      const restored = this.mapSavedScanResult(savedCorrection);
-      this.logVisionSnapshot('Reused saved scan correction', restored);
-      return restored;
-    }
-
-    const cachedAnalysis = this.getCachedImageAnalysis(imageHash);
-    if (cachedAnalysis) {
-      cachedAnalysis.image_hash = imageHash;
-      cachedAnalysis.image_path = options?.imagePath ?? cachedAnalysis.image_path ?? null;
-      this.logVisionSnapshot('Reused cached image analysis', cachedAnalysis);
-      return cachedAnalysis;
-    }
 
     const lang = this.resolveVisionPromptLanguage(language || 'es');
     const requestedScanMode =
