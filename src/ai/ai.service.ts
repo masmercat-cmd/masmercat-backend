@@ -2879,6 +2879,9 @@ Rules:
         '\n\nSingle pallet pipeline.\nAssume one pallet unless another independent base is clearly visible.' +
         '\nFor a corner or diagonal pallet, count the full vertical stack height of the same pallet block, not just the upper half or the nearest face.' +
         '\nIf two visible faces meet at one corner, they still belong to one pallet unless two separate pallet bases are clearly visible.' +
+        '\nCount boxes by full pallet structure: first front columns, then full height rows, then full commercial depth, then multiply.' +
+        '\nDo not stop at the front-visible boxes. Reconstruct the whole pallet volume of the same block.' +
+        '\nIf the front face looks like two visible side-by-side columns from a corner, do not mistake the two faces for only one shallow layer.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
@@ -2892,6 +2895,7 @@ Rules:
           prompts.stage3 +
             '\n\nSingle pallet pipeline.\nKeep the analysis centered on one pallet block.' +
             '\nIf the pallet is seen from a corner, preserve the full commercial stack and avoid truncating the total to the front half only.' +
+            '\nConsolidate the total as a full commercial pallet, not as a literal front-face count.' +
             '\n\nLectura previa del paso 1:\n' +
             JSON.stringify(stage1) +
             '\n\nLectura previa del paso 2:\n' +
@@ -2937,6 +2941,8 @@ Rules:
       prompts.stage2 +
         '\n\nTwo-pallet pipeline.\nFocus on two separate pallet blocks and count the box structure across both pallets.' +
         '\nKeep pallet count at two unless a third independent base is clearly visible.' +
+        '\nCount boxes pallet by pallet: estimate one pallet structure, estimate the second pallet structure, then sum both totals.' +
+        '\nDo not collapse both pallets into one shallow front view and do not count only the nearest visible boxes.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
@@ -2948,6 +2954,7 @@ Rules:
       imageUrl,
       prompts.stage3 +
         '\n\nTwo-pallet pipeline.\nPreserve the total for two pallet blocks and do not collapse them into one.' +
+        '\nFinal total must reflect two full pallets, not one front face duplicated badly or one pallet ignored.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
@@ -2984,6 +2991,8 @@ Rules:
       imageUrl,
       prompts.stage2 +
         '\n\nMulti pallet pipeline.\nCount full pallet footprints or repeated pallet blocks across the whole scene.' +
+        '\nCount boxes by repeated pallet structure or by warehouse block, not by the nearest visible faces only.' +
+        '\nEstimate boxes per pallet first, then multiply by pallet count when pallets look similar.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
@@ -2995,6 +3004,7 @@ Rules:
       imageUrl,
       prompts.stage3 +
         '\n\nMulti pallet pipeline.\nPreserve the total visible warehouse grid and do not collapse the scene to one partial lane.' +
+        '\nFinal total must preserve the whole scene count and remain consistent with the counted pallet blocks.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
