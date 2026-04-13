@@ -206,7 +206,6 @@ if (!image) {
     }
   }
 
-  @UseGuards(JwtAuthGuard)
   @Get('audit/staged-vision')
   async getStagedVisionAudit(@Query('limit') limit?: string) {
     try {
