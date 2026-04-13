@@ -1695,6 +1695,10 @@ Reglas:
       return false;
     }
 
+    if (`${parsed?.scene_pipeline ?? ''}`.trim().toLowerCase() === 'single') {
+      return false;
+    }
+
     const cajas = this.toNumber(parsed?.cajas_estimadas ?? parsed?.cajas_aprox);
     const confianza = `${parsed?.confianza_estimacion ?? ''}`.trim().toLowerCase();
     const profundidad = this.toNumber(parsed?.profundidad_estimada);
@@ -1729,6 +1733,10 @@ Reglas:
   private shouldRunZoneRecount(parsed: any): boolean {
     const envase = this.normalizeEnvase(parsed?.envase);
     if (!envase.includes('palet')) {
+      return false;
+    }
+
+    if (`${parsed?.scene_pipeline ?? ''}`.trim().toLowerCase() === 'single') {
       return false;
     }
 
@@ -2446,6 +2454,52 @@ Rules:
     return parsed;
   }
 
+  private buildFastSinglePalletStage3(stage1: any, stage2: any): any {
+    const visibleColumns = this.toNumber(stage2?.columnas_visibles);
+    const visibleRows = this.toNumber(stage2?.filas_visibles);
+    const estimatedDepth = this.toNumber(stage2?.profundidad_estimada);
+    const structuralBoxes =
+      visibleColumns > 0 && visibleRows > 0 && estimatedDepth > 0
+        ? visibleColumns * visibleRows * estimatedDepth
+        : 0;
+    const stage2Boxes = this.toNumber(stage2?.cajas_estimadas);
+
+    return {
+      categoria: stage1?.categoria ?? null,
+      producto: stage1?.producto ?? null,
+      envase: stage1?.envase ?? null,
+      material_caja: stage1?.material_caja ?? null,
+      numero_palets:
+        this.toNumber(stage2?.numero_palets) ||
+        this.toNumber(stage1?.numero_palets_visibles_base) ||
+        1,
+      cajas_estimadas: stage2Boxes || structuralBoxes,
+      cajas_aprox: stage2Boxes || structuralBoxes,
+      calibre: 'por confirmar',
+      calidad: 'por confirmar',
+      piezas_por_caja: 0,
+      confidence_mode: 'fast_local_merge',
+    };
+  }
+
+  private shouldRunSinglePalletStage3(stage1: any, stage2: any): boolean {
+    const visibleColumns = this.toNumber(stage2?.columnas_visibles);
+    const visibleRows = this.toNumber(stage2?.filas_visibles);
+    const estimatedDepth = this.toNumber(stage2?.profundidad_estimada);
+    const totalBoxes = this.toNumber(stage2?.cajas_estimadas);
+    const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
+    const confidence = `${stage1?.confianza_base ?? ''}`.trim().toLowerCase();
+
+    return (
+      basePallets > 1 ||
+      confidence.includes('low') ||
+      confidence.includes('baja') ||
+      visibleColumns <= 0 ||
+      visibleRows <= 0 ||
+      (estimatedDepth <= 0 && totalBoxes <= 0)
+    );
+  }
+
   private buildStagedVisionPrompts(
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     scanMode: 'single' | 'multi',
@@ -2548,20 +2602,22 @@ Rules:
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1),
       'OpenAI single pallet step 2',
-      260,
+      220,
     );
-    const stage3 = await this.requestVisionJson(
-      imageUrl,
-      prompts.stage3 +
-        '\n\nSingle pallet pipeline.\nKeep the analysis centered on one pallet block.' +
-        '\nIf the pallet is seen from a corner, preserve the full commercial stack and avoid truncating the total to the front half only.' +
-        '\n\nLectura previa del paso 1:\n' +
-        JSON.stringify(stage1) +
-        '\n\nLectura previa del paso 2:\n' +
-        JSON.stringify(stage2),
-      'OpenAI single pallet step 3',
-      320,
-    );
+    const stage3 = this.shouldRunSinglePalletStage3(stage1, stage2)
+      ? await this.requestVisionJson(
+          imageUrl,
+          prompts.stage3 +
+            '\n\nSingle pallet pipeline.\nKeep the analysis centered on one pallet block.' +
+            '\nIf the pallet is seen from a corner, preserve the full commercial stack and avoid truncating the total to the front half only.' +
+            '\n\nLectura previa del paso 1:\n' +
+            JSON.stringify(stage1) +
+            '\n\nLectura previa del paso 2:\n' +
+            JSON.stringify(stage2),
+          'OpenAI single pallet step 3',
+          240,
+        )
+      : this.buildFastSinglePalletStage3(stage1, stage2);
 
     return this.mergeStagedVisionResult(
       stage1,
