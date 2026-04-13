@@ -1054,12 +1054,35 @@ export class AiService {
       ) &&
       visibleRows >= 10 &&
       visibleColumns > 0 &&
-      visibleColumns <= 3 &&
+      visibleColumns <= 4 &&
       estimatedDepth <= 3 &&
       topBoxes <= 10 &&
       explicitCount >= 1 &&
       explicitCount <= 2 &&
       totalBoxes <= 140
+    );
+  }
+
+  private isLikelyIndustrialSingleCorner(parsed: any): boolean {
+    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+
+    if (palletMeasures.includes('120x100') || boxMeasures.includes('60x40')) {
+      return true;
+    }
+
+    return (
+      ['diagonal', 'lateral', 'side', 'front', 'frontal'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleRows >= 8 &&
+      visibleColumns >= 2 &&
+      visibleColumns <= 4 &&
+      topBoxes <= 6
     );
   }
 
@@ -1133,27 +1156,26 @@ export class AiService {
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
-    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
-    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
-    const likelyIndustrial =
-      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const likelyIndustrial = this.isLikelyIndustrialSingleCorner(parsed);
+    const effectiveColumns =
+      visibleColumns >= 4 && estimatedDepth <= 2 ? Math.ceil(visibleColumns / 2) : visibleColumns;
     const minimumCommercialDepth = likelyIndustrial
-      ? visibleColumns <= 2
+      ? effectiveColumns <= 2
         ? 4
         : 3
-      : visibleColumns <= 2
+      : effectiveColumns <= 2
         ? 3
         : 2;
     const correctedDepth = Math.max(estimatedDepth, minimumCommercialDepth);
     const correctedBoxes =
-      visibleColumns > 0 && visibleRows > 0
-        ? visibleColumns * visibleRows * correctedDepth
+      effectiveColumns > 0 && visibleRows > 0
+        ? effectiveColumns * visibleRows * correctedDepth
         : estimatedBoxes;
 
     parsed.profundidad_estimada = correctedDepth;
     parsed.cajas_por_capa = Math.max(
       this.toNumber(parsed?.cajas_por_capa),
-      visibleColumns * correctedDepth,
+      effectiveColumns * correctedDepth,
     );
     parsed.capas_estimadas = Math.max(
       this.toNumber(parsed?.capas_estimadas),
@@ -1177,16 +1199,15 @@ export class AiService {
       return estimatedBoxes;
     }
 
-    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
-    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
-    const likelyIndustrial =
-      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const likelyIndustrial = this.isLikelyIndustrialSingleCorner(parsed);
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
     const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const effectiveColumns =
+      visibleColumns >= 4 && estimatedDepth <= 2 ? Math.ceil(visibleColumns / 2) : visibleColumns;
 
-    if (!likelyIndustrial || visibleColumns <= 0) {
+    if (!likelyIndustrial || effectiveColumns <= 0) {
       return estimatedBoxes;
     }
 
@@ -1204,9 +1225,9 @@ export class AiService {
     }
 
     const candidateTotals =
-      visibleColumns <= 2
+      effectiveColumns <= 2
         ? [160, 168, 176, 184, 192]
-        : [144, 160, 168, 180];
+        : [144, 160, 168, 180, 184];
     const correctedBoxes = candidateTotals.reduce((best, candidate) => {
       if (best === 0) return candidate;
       return Math.abs(candidate - estimatedBoxes) < Math.abs(best - estimatedBoxes)
@@ -1216,8 +1237,8 @@ export class AiService {
 
     parsed.cajas_por_capa = Math.max(
       this.toNumber(parsed?.cajas_por_capa),
-      visibleColumns * Math.max(estimatedDepth, 4),
-      visibleColumns <= 2 ? 8 : 12,
+      effectiveColumns * Math.max(estimatedDepth, 4),
+      effectiveColumns <= 2 ? 8 : 12,
     );
     parsed.capas_estimadas = Math.max(
       this.toNumber(parsed?.capas_estimadas),
@@ -1249,18 +1270,17 @@ export class AiService {
       return estimatedBoxes;
     }
 
-    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
-    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
-    const likelyIndustrial =
-      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const likelyIndustrial = this.isLikelyIndustrialSingleCorner(parsed);
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
     const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const effectiveColumns =
+      visibleColumns >= 4 && estimatedDepth <= 2 ? Math.ceil(visibleColumns / 2) : visibleColumns;
 
     const likelySummerTrayPallet =
       likelyIndustrial &&
-      visibleColumns <= 2 &&
+      effectiveColumns <= 2 &&
       visibleRows >= 8 &&
       visibleRows <= 24 &&
       estimatedDepth >= 2 &&
