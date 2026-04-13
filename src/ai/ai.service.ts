@@ -2735,20 +2735,76 @@ Rules:
     }
   }
 
+  private buildPalletCountPrompt(
+    pipeline: 'single' | 'two' | 'multi',
+    stage1: any,
+  ): string {
+    return [
+      'Analyze this fruit or vegetable image.',
+      '',
+      'Pallet count step only: count independent pallet bases or full pallet blocks before counting boxes.',
+      '',
+      'Return ONLY valid JSON:',
+      '{',
+      '  "numero_palets": 0,',
+      '  "bases_independientes_visibles": 0,',
+      '  "bloques_palets_visibles": 0,',
+      '  "columnas_palets_visibles": 0,',
+      '  "filas_palets_visibles": 0,',
+      '  "confianza_palets": "high/medium/low"',
+      '}',
+      '',
+      'Rules:',
+      pipeline === 'single'
+        ? '- Count one pallet unless another separate base is clearly visible.'
+        : pipeline === 'two'
+          ? '- Focus on whether the scene shows exactly two separate pallet bases or pallet blocks.'
+          : '- Count all pallet bases or repeated pallet blocks across the whole scene.',
+      '- Count pallet bases first, not box columns.',
+      '- If two visible faces belong to the same corner block, count one pallet, not two.',
+      '- If two pallet bases are clearly separated by floor gap or different blocks, count two pallets.',
+      '- For warehouse or top views, count pallet footprints before estimating any box structure.',
+      '',
+      'Step 1 context:',
+      JSON.stringify(stage1),
+    ].join('\n');
+  }
+
+  private async requestPalletCountStage(
+    imageUrl: string,
+    stage1: any,
+    pipeline: 'single' | 'two' | 'multi',
+  ): Promise<any> {
+    return this.requestVisionJson(
+      imageUrl,
+      this.buildPalletCountPrompt(pipeline, stage1),
+      `OpenAI pallet count step ${pipeline}`,
+      180,
+    );
+  }
+
   private inferScenePipeline(
     stage1: any,
     requestedScanMode: 'single' | 'multi',
-  ): 'single' | 'multi' {
+  ): 'single' | 'two' | 'multi' {
     if (requestedScanMode === 'multi') {
       return 'multi';
     }
 
     const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
     const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
+    const warehouseLike = ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+      view.includes(term),
+    );
+    if (warehouseLike || basePallets >= 3) {
+      return 'multi';
+    }
+
+    if (basePallets === 2) {
+      return 'two';
+    }
+
     if (
-      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
-        view.includes(term),
-      ) ||
       basePallets >= 2
     ) {
       return 'multi';
@@ -2788,6 +2844,15 @@ Rules:
       );
     }
 
+    if (pipeline === 'two') {
+      return this.runTwoPalletVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+        stage1,
+      );
+    }
+
     return this.runSinglePalletVisionAnalysis(
       imageUrl,
       language,
@@ -2803,6 +2868,11 @@ Rules:
     stage1: any,
   ): Promise<any> {
     const prompts = this.buildStagedVisionPrompts(language, 'single');
+    const palletCountStage = await this.requestPalletCountStage(
+      imageUrl,
+      stage1,
+      'single',
+    );
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
@@ -2810,7 +2880,9 @@ Rules:
         '\nFor a corner or diagonal pallet, count the full vertical stack height of the same pallet block, not just the upper half or the nearest face.' +
         '\nIf two visible faces meet at one corner, they still belong to one pallet unless two separate pallet bases are clearly visible.' +
         '\n\nLectura previa del paso 1:\n' +
-        JSON.stringify(stage1),
+        JSON.stringify(stage1) +
+        '\n\nConteo previo de palets:\n' +
+        JSON.stringify(palletCountStage),
       'OpenAI single pallet step 2',
       220,
     );
@@ -2839,11 +2911,60 @@ Rules:
     }
 
     return this.mergeStagedVisionResult(
+        stage1,
+        stage2,
+        stage3,
+        palletCountStage,
+        requestedScanMode,
+        'single',
+      );
+  }
+
+  private async runTwoPalletVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+    stage1: any,
+  ): Promise<any> {
+    const prompts = this.buildStagedVisionPrompts(language, 'multi');
+    const palletCountStage = await this.requestPalletCountStage(
+      imageUrl,
+      stage1,
+      'two',
+    );
+    const stage2 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage2 +
+        '\n\nTwo-pallet pipeline.\nFocus on two separate pallet blocks and count the box structure across both pallets.' +
+        '\nKeep pallet count at two unless a third independent base is clearly visible.' +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1) +
+        '\n\nConteo previo de palets:\n' +
+        JSON.stringify(palletCountStage),
+      'OpenAI two pallet step 2',
+      240,
+    );
+    const stage3 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage3 +
+        '\n\nTwo-pallet pipeline.\nPreserve the total for two pallet blocks and do not collapse them into one.' +
+        '\n\nLectura previa del paso 1:\n' +
+        JSON.stringify(stage1) +
+        '\n\nConteo previo de palets:\n' +
+        JSON.stringify(palletCountStage) +
+        '\n\nLectura previa del paso 2:\n' +
+        JSON.stringify(stage2),
+      'OpenAI two pallet step 3',
+      240,
+    );
+
+    return this.mergeStagedVisionResult(
       stage1,
       stage2,
       stage3,
+      palletCountStage,
       requestedScanMode,
-      'single',
+      'two',
     );
   }
 
@@ -2854,12 +2975,19 @@ Rules:
     stage1: any,
   ): Promise<any> {
     const prompts = this.buildStagedVisionPrompts(language, 'multi');
+    const palletCountStage = await this.requestPalletCountStage(
+      imageUrl,
+      stage1,
+      'multi',
+    );
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
         '\n\nMulti pallet pipeline.\nCount full pallet footprints or repeated pallet blocks across the whole scene.' +
         '\n\nLectura previa del paso 1:\n' +
-        JSON.stringify(stage1),
+        JSON.stringify(stage1) +
+        '\n\nConteo previo de palets:\n' +
+        JSON.stringify(palletCountStage),
       'OpenAI multi pallet step 2',
       260,
     );
@@ -2869,6 +2997,8 @@ Rules:
         '\n\nMulti pallet pipeline.\nPreserve the total visible warehouse grid and do not collapse the scene to one partial lane.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
+        '\n\nConteo previo de palets:\n' +
+        JSON.stringify(palletCountStage) +
         '\n\nLectura previa del paso 2:\n' +
         JSON.stringify(stage2),
       'OpenAI multi pallet step 3',
@@ -2879,6 +3009,7 @@ Rules:
       stage1,
       stage2,
       stage3,
+      palletCountStage,
       requestedScanMode,
       'multi',
     );
@@ -2888,8 +3019,9 @@ Rules:
     stage1: any,
     stage2: any,
     stage3: any,
+    palletCountStage: any,
     requestedScanMode: 'single' | 'multi',
-    pipeline: 'single' | 'multi',
+    pipeline: 'single' | 'two' | 'multi',
   ): any {
     const structuralColumns = this.toNumber(stage2?.columnas_visibles);
     const structuralRows = this.toNumber(stage2?.filas_visibles);
@@ -2917,6 +3049,8 @@ Rules:
       material_caja: stage3?.material_caja ?? stage1?.material_caja,
       numero_palets:
         this.toNumber(stage3?.numero_palets) ||
+        this.toNumber(palletCountStage?.numero_palets) ||
+        this.toNumber(palletCountStage?.bases_independientes_visibles) ||
         this.toNumber(stage2?.numero_palets) ||
         this.toNumber(stage1?.numero_palets_visibles_base),
       cajas_estimadas:
@@ -2943,6 +3077,13 @@ Rules:
         ),
       },
       stage2: {
+        numero_palets_stage: this.toNumber(palletCountStage?.numero_palets),
+        bases_independientes_visibles: this.toNumber(
+          palletCountStage?.bases_independientes_visibles,
+        ),
+        bloques_palets_visibles: this.toNumber(
+          palletCountStage?.bloques_palets_visibles,
+        ),
         numero_palets: this.toNumber(stage2?.numero_palets),
         columnas_visibles: structuralColumns,
         filas_visibles: structuralRows,
