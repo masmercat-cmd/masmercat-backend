@@ -235,6 +235,8 @@ export class MarketsService {
         lotProducts: [] as string[],
       };
 
+      group.priceItems = Array.isArray(group.priceItems) ? group.priceItems : [];
+      group.lotProducts = Array.isArray(group.lotProducts) ? group.lotProducts : [];
       group.lotCount = Number(group.lotCount ?? 0) + 1;
       if (lotProductName && !group.lotProducts.includes(lotProductName)) {
         group.lotProducts.push(lotProductName);
