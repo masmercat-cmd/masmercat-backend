@@ -1493,12 +1493,12 @@ export class AiService {
       const topBoxes = this.toNumber(parsed.cajas_superiores);
       const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
       const likelyStoneFruitTrayCorner =
-        visibleColumns >= 4 &&
-        visibleRows >= 10 &&
-        visibleRows <= 14 &&
-        estimatedDepth <= 2 &&
-        topBoxes <= 6 &&
-        (boxMeasures.includes('60x40') || boxMeasures.length === 0);
+      visibleColumns >= 4 &&
+      visibleRows >= 10 &&
+      visibleRows <= 30 &&
+      estimatedDepth <= 2 &&
+      topBoxes <= 6 &&
+      (boxMeasures.includes('60x40') || boxMeasures.length === 0);
 
       if (likelyStoneFruitTrayCorner) {
         boxes = Math.max(boxes, 184);
@@ -2765,6 +2765,41 @@ Rules:
     );
   }
 
+  private async requestSingleFrontFaceCountStage(
+    imageUrl: string,
+    stage1: any,
+  ): Promise<any> {
+    return this.requestVisionJson(
+      imageUrl,
+      [
+        'Analyze this fruit pallet image.',
+        '',
+        'Front-face count step only for one single pallet.',
+        'Count exactly what is visible on the front face before estimating commercial totals.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "columnas_visibles_frontal": 0,',
+        '  "filas_visibles_frontal": 0,',
+        '  "cajas_superiores_frontal": 0,',
+        '  "confianza_frontal": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Count only the visible front face of the same pallet block.',
+        '- Count the exact number of stacked rows you can see from bottom to top.',
+        '- Count front columns exactly as seen.',
+        '- Do not estimate hidden rear depth here.',
+        '- If the pallet is diagonal, still count the front rows that are actually visible.',
+        '',
+        'Step 1 context:',
+        JSON.stringify(stage1),
+      ].join('\n'),
+      'OpenAI single pallet front-face count',
+      140,
+    );
+  }
+
   private inferScenePipeline(
     stage1: any,
     requestedScanMode: 'single' | 'multi',
@@ -2855,6 +2890,10 @@ Rules:
       stage1,
       'single',
     );
+    const frontFaceStage = await this.requestSingleFrontFaceCountStage(
+      imageUrl,
+      stage1,
+    );
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
@@ -2864,9 +2903,23 @@ Rules:
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
-        JSON.stringify(palletCountStage),
+        JSON.stringify(palletCountStage) +
+        '\n\nConteo previo de cara frontal visible:\n' +
+        JSON.stringify(frontFaceStage),
       'OpenAI single pallet step 2',
       220,
+    );
+    stage2.filas_visibles = Math.max(
+      this.toNumber(stage2?.filas_visibles),
+      this.toNumber(frontFaceStage?.filas_visibles_frontal),
+    );
+    stage2.columnas_visibles = Math.max(
+      this.toNumber(stage2?.columnas_visibles),
+      this.toNumber(frontFaceStage?.columnas_visibles_frontal),
+    );
+    stage2.cajas_superiores = Math.max(
+      this.toNumber(stage2?.cajas_superiores),
+      this.toNumber(frontFaceStage?.cajas_superiores_frontal),
     );
     let stage3 = this.shouldRunSinglePalletStage3(stage1, stage2)
       ? await this.requestVisionJson(
@@ -2877,7 +2930,9 @@ Rules:
             '\n\nLectura previa del paso 1:\n' +
             JSON.stringify(stage1) +
             '\n\nLectura previa del paso 2:\n' +
-            JSON.stringify(stage2),
+            JSON.stringify(stage2) +
+            '\n\nConteo frontal exacto:\n' +
+            JSON.stringify(frontFaceStage),
           'OpenAI single pallet step 3',
           240,
         )
