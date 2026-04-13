@@ -2500,6 +2500,131 @@ Rules:
     );
   }
 
+  private shouldRunSinglePalletBoxRescue(
+    stage1: any,
+    stage2: any,
+    stage3: any,
+  ): boolean {
+    const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
+    const palletCount = Math.max(
+      this.toNumber(stage3?.numero_palets),
+      this.toNumber(stage2?.numero_palets),
+      basePallets,
+      1,
+    );
+    const visibleColumns = this.toNumber(stage2?.columnas_visibles);
+    const visibleRows = this.toNumber(stage2?.filas_visibles);
+    const estimatedDepth = this.toNumber(stage2?.profundidad_estimada);
+    const frontVisible =
+      visibleColumns > 0 && visibleRows > 0 ? visibleColumns * visibleRows : 0;
+    const totalBoxes = Math.max(
+      this.toNumber(stage3?.cajas_estimadas),
+      this.toNumber(stage3?.cajas_aprox),
+      this.toNumber(stage2?.cajas_estimadas),
+    );
+    const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+
+    return (
+      palletCount === 1 &&
+      ['diagonal', 'lateral', 'side', 'front', 'frontal'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleColumns > 0 &&
+      visibleRows >= 8 &&
+      frontVisible > 0 &&
+      totalBoxes > 0 &&
+      (totalBoxes <= 80 ||
+        totalBoxes <= frontVisible + Math.max(10, visibleRows) ||
+        estimatedDepth <= 2)
+    );
+  }
+
+  private async rescueSinglePalletBoxCount(
+    imageUrl: string,
+    stage1: any,
+    stage2: any,
+    stage3: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      imageUrl,
+      [
+        'Analyze this fruit pallet image.',
+        '',
+        'Emergency recount for one single pallet only.',
+        'Focus only on the total commercial box count of the same pallet block.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "numero_palets": 1,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "confianza_estimacion": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- Count one pallet only.',
+        '- If two visible faces meet at one corner, they belong to the same pallet.',
+        '- Count the full height of the stack, not only the upper half.',
+        '- Estimate hidden rear boxes from the side depth.',
+        '- Do not return only the front-visible boxes.',
+        '- Prefer a coherent full-pallet commercial total over a low partial count.',
+        '',
+        'Step 1 context:',
+        JSON.stringify(stage1),
+        '',
+        'Step 2 structure:',
+        JSON.stringify(stage2),
+        '',
+        'Current total:',
+        JSON.stringify(stage3),
+      ].join('\n'),
+      'OpenAI single pallet box rescue',
+      180,
+    );
+
+    return {
+      ...stage3,
+      ...rescue,
+      numero_palets: Math.max(
+        1,
+        this.toNumber(rescue?.numero_palets) || this.toNumber(stage3?.numero_palets) || 1,
+      ),
+      cajas_estimadas: Math.max(
+        this.toNumber(stage3?.cajas_estimadas),
+        this.toNumber(stage2?.cajas_estimadas),
+        this.toNumber(rescue?.cajas_estimadas),
+        this.toNumber(rescue?.cajas_aprox),
+      ),
+      cajas_aprox: Math.max(
+        this.toNumber(stage3?.cajas_aprox),
+        this.toNumber(stage3?.cajas_estimadas),
+        this.toNumber(rescue?.cajas_aprox),
+        this.toNumber(rescue?.cajas_estimadas),
+      ),
+      columnas_visibles:
+        rescue?.columnas_visibles ?? stage2?.columnas_visibles ?? stage3?.columnas_visibles,
+      filas_visibles:
+        rescue?.filas_visibles ?? stage2?.filas_visibles ?? stage3?.filas_visibles,
+      profundidad_estimada:
+        rescue?.profundidad_estimada ??
+        stage2?.profundidad_estimada ??
+        stage3?.profundidad_estimada,
+      cajas_por_capa:
+        rescue?.cajas_por_capa ?? stage2?.cajas_por_capa ?? stage3?.cajas_por_capa,
+      capas_estimadas:
+        rescue?.capas_estimadas ?? stage2?.capas_estimadas ?? stage3?.capas_estimadas,
+      cajas_superiores:
+        rescue?.cajas_superiores ?? stage2?.cajas_superiores ?? stage3?.cajas_superiores,
+      rescue_mode: 'single_box_recount',
+    };
+  }
+
   private buildStagedVisionPrompts(
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     scanMode: 'single' | 'multi',
@@ -2604,7 +2729,7 @@ Rules:
       'OpenAI single pallet step 2',
       220,
     );
-    const stage3 = this.shouldRunSinglePalletStage3(stage1, stage2)
+    let stage3 = this.shouldRunSinglePalletStage3(stage1, stage2)
       ? await this.requestVisionJson(
           imageUrl,
           prompts.stage3 +
@@ -2618,6 +2743,15 @@ Rules:
           240,
         )
       : this.buildFastSinglePalletStage3(stage1, stage2);
+
+    if (this.shouldRunSinglePalletBoxRescue(stage1, stage2, stage3)) {
+      stage3 = await this.rescueSinglePalletBoxCount(
+        imageUrl,
+        stage1,
+        stage2,
+        stage3,
+      );
+    }
 
     return this.mergeStagedVisionResult(
       stage1,
