@@ -99,7 +99,21 @@ export class AiService {
   }
 
   private normalizeProducto(value: any): string {
-    return `${value ?? ''}`.trim().toLowerCase();
+    const normalized = `${value ?? ''}`.trim().toLowerCase();
+    const aliases: Record<string, string> = {
+      peach: 'melocoton',
+      peaches: 'melocoton',
+      'flat peach': 'paraguayo',
+      'flat peaches': 'paraguayo',
+      donut: 'paraguayo',
+      'donut peach': 'paraguayo',
+      'donut peaches': 'paraguayo',
+      nectarine: 'nectarina',
+      nectarines: 'nectarina',
+      peachs: 'melocoton',
+    };
+
+    return aliases[normalized] ?? normalized;
   }
 
   private resolveVisionPromptLanguage(
@@ -1041,11 +1055,11 @@ export class AiService {
       visibleRows >= 10 &&
       visibleColumns > 0 &&
       visibleColumns <= 3 &&
-      estimatedDepth <= 2 &&
-      topBoxes <= 8 &&
-      explicitCount >= 2 &&
+      estimatedDepth <= 3 &&
+      topBoxes <= 10 &&
+      explicitCount >= 1 &&
       explicitCount <= 2 &&
-      totalBoxes <= 120
+      totalBoxes <= 140
     );
   }
 
@@ -1178,12 +1192,12 @@ export class AiService {
 
     const likelyTallUnderCount =
       estimatedBoxes >= 60 &&
-      estimatedBoxes <= 120 &&
+      estimatedBoxes <= 140 &&
       visibleRows >= 8 &&
-      visibleRows <= 14 &&
-      estimatedDepth >= 3 &&
+      visibleRows <= 24 &&
+      estimatedDepth >= 2 &&
       estimatedDepth <= 5 &&
-      topBoxes <= 8;
+      topBoxes <= 10;
 
     if (!likelyTallUnderCount) {
       return estimatedBoxes;
@@ -1248,12 +1262,12 @@ export class AiService {
       likelyIndustrial &&
       visibleColumns <= 2 &&
       visibleRows >= 8 &&
-      visibleRows <= 14 &&
-      estimatedDepth >= 3 &&
+      visibleRows <= 24 &&
+      estimatedDepth >= 2 &&
       estimatedDepth <= 5 &&
-      topBoxes <= 8 &&
+      topBoxes <= 10 &&
       estimatedBoxes >= 72 &&
-      estimatedBoxes <= 110;
+      estimatedBoxes <= 140;
 
     if (!likelySummerTrayPallet) {
       return estimatedBoxes;
@@ -2529,6 +2543,8 @@ Rules:
       imageUrl,
       prompts.stage2 +
         '\n\nSingle pallet pipeline.\nAssume one pallet unless another independent base is clearly visible.' +
+        '\nFor a corner or diagonal pallet, count the full vertical stack height of the same pallet block, not just the upper half or the nearest face.' +
+        '\nIf two visible faces meet at one corner, they still belong to one pallet unless two separate pallet bases are clearly visible.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1),
       'OpenAI single pallet step 2',
@@ -2538,6 +2554,7 @@ Rules:
       imageUrl,
       prompts.stage3 +
         '\n\nSingle pallet pipeline.\nKeep the analysis centered on one pallet block.' +
+        '\nIf the pallet is seen from a corner, preserve the full commercial stack and avoid truncating the total to the front half only.' +
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nLectura previa del paso 2:\n' +
