@@ -1338,6 +1338,50 @@ export class AiService {
     return Math.max(estimatedBoxes, 184);
   }
 
+  private applyHardSingleCornerCommercialFloor(
+    parsed: any,
+    envase: string,
+    producto: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    if (!this.isSingleCornerPalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
+    if (!['melocoton', 'nectarina', 'paraguayo'].includes(producto)) {
+      return estimatedBoxes;
+    }
+
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyCommercialCorner =
+      visibleRows >= 8 &&
+      visibleColumns >= 2 &&
+      estimatedDepth <= 2 &&
+      topBoxes <= 8 &&
+      (boxMeasures.includes('60x40') || boxMeasures.length === 0);
+
+    if (!likelyCommercialCorner || estimatedBoxes > 120) {
+      return estimatedBoxes;
+    }
+
+    parsed.medidas_caja = '60x40 cm aprox';
+    parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+    parsed.profundidad_estimada = Math.max(estimatedDepth, 4);
+    parsed.cajas_por_capa = Math.max(this.toNumber(parsed?.cajas_por_capa), 8);
+    parsed.capas_estimadas = Math.max(this.toNumber(parsed?.capas_estimadas), 23);
+
+    return Math.max(estimatedBoxes, 184);
+  }
+
   private inferPalletCount(parsed: any, envase: string): number {
     if (!envase.includes('palet') && !envase.includes('palot')) {
       return 0;
@@ -1475,6 +1519,13 @@ export class AiService {
       palletCount,
     );
     boxes = this.applyStoneFruitCornerPattern(
+      parsed,
+      envase,
+      producto,
+      boxes,
+      palletCount,
+    );
+    boxes = this.applyHardSingleCornerCommercialFloor(
       parsed,
       envase,
       producto,
