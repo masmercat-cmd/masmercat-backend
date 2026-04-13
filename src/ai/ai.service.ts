@@ -1509,6 +1509,27 @@ export class AiService {
         parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
       }
     }
+    if (
+      envase.includes('palet') &&
+      palletCount === 2 &&
+      ['melocoton', 'nectarina', 'paraguayo'].includes(producto)
+    ) {
+      const visibleRows = this.toNumber(parsed.filas_visibles);
+      const visibleColumns = this.toNumber(parsed.columnas_visibles);
+      const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
+      const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
+      const likelyIndustrialStoneFruit =
+        boxMeasures.includes('60x40') ||
+        palletMeasures.includes('120x100') ||
+        (visibleRows >= 8 && visibleColumns >= 4);
+
+      if (likelyIndustrialStoneFruit && boxes > 0 && boxes <= 96) {
+        const commercialFloor = visibleRows >= 9 ? 144 : 128;
+        boxes = Math.max(boxes, commercialFloor);
+        parsed.medidas_caja = '60x40 cm aprox';
+        parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+      }
+    }
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
     const palletTareKg = this.inferPalletTareKg(parsed, envase, boxes);
@@ -2406,24 +2427,6 @@ Rules:
     let img = (base64Image || '').trim();
     img = img.replace(/^data:image\/\w+;base64,/, '');
     const imageHash = this.buildImageHash(img);
-    const savedCorrection = await this.findSavedCorrection(
-      imageHash,
-      options?.imagePath,
-    );
-
-    if (savedCorrection) {
-      const restored = this.mapSavedScanResult(savedCorrection);
-      this.logVisionSnapshot('Reused saved scan correction', restored);
-      return restored;
-    }
-
-    const cachedAnalysis = this.getCachedImageAnalysis(imageHash);
-    if (cachedAnalysis) {
-      cachedAnalysis.image_hash = imageHash;
-      cachedAnalysis.image_path = options?.imagePath ?? cachedAnalysis.image_path ?? null;
-      this.logVisionSnapshot('Reused cached image analysis', cachedAnalysis);
-      return cachedAnalysis;
-    }
 
     const lang = this.resolveVisionPromptLanguage(language || 'es');
     const requestedScanMode =

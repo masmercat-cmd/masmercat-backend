@@ -254,6 +254,9 @@ export class MarketsService {
           currency: 'EUR',
           unitType: lot.unitType,
           source: 'MasMercat lots',
+          sourceType: 'internal_offer',
+          isEstimated: false,
+          priceType: 'offer',
           sourceRegion: lot.market.country,
           region: this.resolveRegionFromCountryOrContinent(
             `${lot.market.country ?? ''}`,
@@ -504,6 +507,16 @@ export class MarketsService {
   }
 
   private mapReferencePrice(row: PriceHistory) {
+    const source = (row.additionalData?.source as string) ?? 'MasMercat';
+    const normalizedSource = this.normalizeText(source);
+    const isOfficial =
+      normalizedSource.includes('eu agridata') ||
+      normalizedSource.includes('agmarknet') ||
+      normalizedSource.includes('sniim') ||
+      normalizedSource.includes('obour') ||
+      normalizedSource.includes('ceagesp') ||
+      normalizedSource.includes('statistics canada');
+
     return {
       fruitId: row.fruitId,
       fruitName: row.fruit?.nameEs ?? row.fruit?.nameEn ?? '',
@@ -514,7 +527,10 @@ export class MarketsService {
       price: Number(row.price),
       currency: (row.additionalData?.currency as string) ?? 'EUR',
       unitType: row.unitType ?? 'kg',
-      source: (row.additionalData?.source as string) ?? 'MasMercat',
+      source,
+      sourceType: isOfficial ? 'official_market' : 'observed_market',
+      isEstimated: false,
+      priceType: isOfficial ? 'official' : 'observed',
       sourceRegion: (row.additionalData?.sourceRegion as string) ?? row.market?.country ?? '',
       region: this.resolveRegionKey(row),
       productStage: (row.additionalData?.productStage as string) ?? 'Reference price',
