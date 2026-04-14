@@ -1240,6 +1240,39 @@ export class AiService {
     return parsed;
   }
 
+  private shouldForcePalletWithBoxes(parsed: any): boolean {
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const estimatedBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const explicitPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.numero_palets_visibles_base),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const hasPalletHints =
+      parsed?.hay_palet === true ||
+      parsed?.hay_cajas === true ||
+      explicitPallets > 0;
+    const strongStackedGrid =
+      visibleColumns >= 4 &&
+      visibleRows >= 4 &&
+      (topBoxes >= 3 || estimatedDepth >= 2 || estimatedBoxes >= 24);
+    const strongTopFace =
+      visibleRows >= 5 &&
+      topBoxes >= 4 &&
+      explicitPallets >= 1;
+
+    return hasPalletHints && (strongStackedGrid || strongTopFace);
+  }
+
   private applySingleCornerBoxCorrection(
     parsed: any,
     envase: string,
@@ -1676,6 +1709,10 @@ export class AiService {
 
   private finalizeVisionResult(parsed: any): any {
     let envase = this.normalizeEnvase(parsed.envase);
+    if (this.shouldForcePalletWithBoxes(parsed)) {
+      envase = 'palet con cajas';
+      parsed.envase = 'palet con cajas';
+    }
     const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
     const looseTerms = ['sin caja', 'suelto', 'suelta', 'loose', 'a granel'];
     const looksLoose =
