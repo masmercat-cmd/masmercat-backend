@@ -103,17 +103,42 @@ export class AiService {
     const aliases: Record<string, string> = {
       peach: 'melocoton',
       peaches: 'melocoton',
+      'melocoton calanda': 'melocoton',
+      melocotones: 'melocoton',
       'flat peach': 'paraguayo',
       'flat peaches': 'paraguayo',
       donut: 'paraguayo',
       'donut peach': 'paraguayo',
       'donut peaches': 'paraguayo',
+      paraguayos: 'paraguayo',
       nectarine: 'nectarina',
       nectarines: 'nectarina',
+      nectarinas: 'nectarina',
+      granadas: 'granada',
       peachs: 'melocoton',
     };
 
-    return aliases[normalized] ?? normalized;
+    if (aliases[normalized]) {
+      return aliases[normalized];
+    }
+
+    if (normalized.includes('melocoton')) {
+      return 'melocoton';
+    }
+
+    if (normalized.includes('nectarina')) {
+      return 'nectarina';
+    }
+
+    if (normalized.includes('paraguayo')) {
+      return 'paraguayo';
+    }
+
+    if (normalized.includes('granada')) {
+      return 'granada';
+    }
+
+    return normalized;
   }
 
   private resolveVisionPromptLanguage(
@@ -1085,13 +1110,13 @@ export class AiService {
     );
 
     return (
-      ['diagonal', 'lateral', 'frontal', 'side', 'front'].some((term) =>
+      ['diagonal', 'lateral', 'frontal', 'side', 'front', 'corner'].some((term) =>
         view.includes(term),
       ) &&
       visibleRows >= 10 &&
       visibleColumns > 0 &&
       visibleColumns <= 4 &&
-      estimatedDepth <= 3 &&
+      estimatedDepth <= 4 &&
       topBoxes <= 10 &&
       explicitCount >= 1 &&
       explicitCount <= 2 &&
@@ -1382,6 +1407,71 @@ export class AiService {
     return Math.max(estimatedBoxes, 184);
   }
 
+  private applyValidatedReferenceCornerFloor(
+    parsed: any,
+    envase: string,
+    producto: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    if (!this.isSingleCornerPalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
+    const productFloors: Record<string, number> = {
+      granada: 144,
+      melocoton: 184,
+      nectarina: 184,
+      paraguayo: 184,
+    };
+    const validatedFloor = productFloors[producto];
+    if (!validatedFloor || estimatedBoxes >= validatedFloor) {
+      return estimatedBoxes;
+    }
+
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyReferenceShape =
+      visibleColumns >= 2 &&
+      visibleColumns <= 4 &&
+      visibleRows >= 8 &&
+      visibleRows <= 24 &&
+      estimatedDepth <= 4 &&
+      topBoxes <= 10 &&
+      (boxMeasures.includes('60x40') || boxMeasures.length === 0);
+
+    if (!likelyReferenceShape) {
+      return estimatedBoxes;
+    }
+
+    parsed.profundidad_estimada = Math.max(
+      estimatedDepth,
+      validatedFloor >= 180 ? 4 : 3,
+    );
+    parsed.cajas_por_capa = Math.max(
+      this.toNumber(parsed?.cajas_por_capa),
+      validatedFloor >= 180 ? 8 : 6,
+    );
+    parsed.capas_estimadas = Math.max(
+      this.toNumber(parsed?.capas_estimadas),
+      Math.round(validatedFloor / Math.max(1, this.toNumber(parsed?.cajas_por_capa))),
+      visibleRows,
+    );
+
+    if (boxMeasures.length === 0) {
+      parsed.medidas_caja = '60x40 cm aprox';
+    }
+
+    return Math.max(estimatedBoxes, validatedFloor);
+  }
+
   private inferPalletCount(parsed: any, envase: string): number {
     if (!envase.includes('palet') && !envase.includes('palot')) {
       return 0;
@@ -1526,6 +1616,13 @@ export class AiService {
       palletCount,
     );
     boxes = this.applyHardSingleCornerCommercialFloor(
+      parsed,
+      envase,
+      producto,
+      boxes,
+      palletCount,
+    );
+    boxes = this.applyValidatedReferenceCornerFloor(
       parsed,
       envase,
       producto,
@@ -2647,16 +2744,18 @@ Rules:
 
     return (
       palletCount === 1 &&
-      ['diagonal', 'lateral', 'side', 'front', 'frontal'].some((term) =>
+      ['diagonal', 'lateral', 'side', 'front', 'frontal', 'corner'].some((term) =>
         view.includes(term),
       ) &&
       visibleColumns > 0 &&
-      visibleRows >= 8 &&
+      visibleRows >= 7 &&
       frontVisible > 0 &&
       totalBoxes > 0 &&
       (totalBoxes <= 80 ||
+        totalBoxes <= Math.round(frontVisible * 1.25) ||
         totalBoxes <= frontVisible + Math.max(10, visibleRows) ||
-        estimatedDepth <= 2)
+        estimatedDepth <= 2 ||
+        (estimatedDepth <= 3 && visibleRows >= 10))
     );
   }
 

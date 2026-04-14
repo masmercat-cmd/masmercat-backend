@@ -1,0 +1,21 @@
+capture_id,image_status,image_name_or_chat_ref,product,real_pallets,real_boxes,pieces_per_box,gross_weight_kg,packaging,view,quality,known_data_level,boxes_exact,pallets_exact,weight_exact,notes
+case_001,chat_only,chat_case_melocoton_calanda_001,melocoton calanda,1,184,,,palet con cajas,corner,,boxes+pallets,yes,yes,no,Palet suelto en esquina confirmado por usuario
+case_002,chat_only,chat_case_granadas_001,granadas,1,144,,,palet con cajas,corner,,boxes+pallets,yes,yes,no,Palet suelto con cajas negras confirmado por usuario
+case_003,pending_file,,,,,,,palet con cajas,front,,unknown,no,no,no,Objetivo: palet unico frontal con conteo exacto confirmado
+case_004,pending_file,,,,,,,palet con cajas,diagonal,,unknown,no,no,no,Objetivo: palet unico diagonal con cajas 60x40 y subconteo habitual
+case_005,pending_file,,,,,,,palet con cajas,corner,,unknown,no,no,no,Objetivo: segundo caso real de fruta de hueso en esquina
+case_006,pending_file,,,,,,,palet con cajas,corner,,unknown,no,no,no,Objetivo: segundo caso real de granada o citrico en esquina
+case_007,pending_file,,,,,,,palet con cajas,side,,unknown,no,no,no,Objetivo: palet unico lateral donde la profundidad sea visible
+case_008,pending_file,,,,,,,palet con cajas,warehouse,,unknown,no,no,no,Objetivo: almacen con 6-12 palets visibles y suelo parcialmente oculto
+case_009,pending_file,,,,,,,palet con cajas,warehouse,,unknown,no,no,no,Objetivo: almacen denso con 12 o mas palets visibles
+case_010,pending_file,,,,,,,palet con cajas,top,,unknown,no,no,no,Objetivo: vista superior para probar huellas de palet
+case_011,pending_file,,,,,,,palet con cajas,front,,unknown,no,no,no,Objetivo: doble palet frontal con total confirmado
+case_012,pending_file,,,,,,,palet con cajas,diagonal,,unknown,no,no,no,Objetivo: doble palet diagonal sin colapso a un solo bloque
+case_013,pending_file,,,,,,,palot,front,,unknown,no,no,no,Objetivo: distinguir palot de palet con cajas
+case_014,pending_file,,,,,,,palot,warehouse,,unknown,no,no,no,Objetivo: lote mixto con palots en almacen
+case_015,pending_file,,,,,,,sin caja,closeup,,unknown,no,no,no,Objetivo: fruta suelta para asegurar cero cajas
+case_016,pending_file,,,,,,,caja,front,,unknown,no,no,no,Objetivo: caja unica fuera de palet
+case_017,pending_file,,,,,,,palet con cajas,corner,,unknown,no,no,no,Objetivo: producto con alias de nombre comercial o variedad
+case_018,pending_file,,,,,,,palet con cajas,warehouse,,unknown,no,no,no,Objetivo: escenario con media rejilla visible para validar doblado de palets
+case_019,pending_file,,,,,,,palet con cajas,warehouse,,unknown,no,no,no,Objetivo: escenario con cuarto de rejilla visible para validar multiplicacion por 4
+case_020,pending_file,,,,,,,palet con cajas,front,,unknown,no,no,no,Objetivo: caso limite con peso real confirmado para validar consistencia cajas-peso
