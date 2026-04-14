@@ -1147,6 +1147,46 @@ export class AiService {
     );
   }
 
+  private isSingleTopVisiblePalletView(parsed: any, envase: string): boolean {
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi') {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const explicitCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+
+    return (
+      ['frontal', 'front', 'diagonal', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      ) &&
+      explicitCount <= 1 &&
+      visibleColumns >= 4 &&
+      visibleRows >= 5 &&
+      topBoxes >= 4 &&
+      topBoxes <= 8 &&
+      estimatedDepth <= 1 &&
+      totalBoxes <= 80
+    );
+  }
+
   private applyPalletSceneCorrections(parsed: any, envase: string): any {
     if (!envase.includes('palet')) {
       return parsed;
@@ -1472,6 +1512,59 @@ export class AiService {
     return Math.max(estimatedBoxes, validatedFloor);
   }
 
+  private applySingleTopVisiblePalletCorrection(
+    parsed: any,
+    envase: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    if (!this.isSingleTopVisiblePalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = Math.max(
+      this.toNumber(parsed?.cajas_superiores),
+      this.toNumber(parsed?.cajas_por_capa),
+    );
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      `${parsed?.medidas_palet ?? ''}`.toLowerCase().includes('120x100') ||
+      boxMeasures.includes('60x40') ||
+      visibleColumns >= 5;
+    const inferredDepth =
+      likelyIndustrial && topBoxes >= 4 && topBoxes <= 6
+        ? 3
+        : topBoxes >= 6
+          ? 2
+          : 3;
+    const correctedDepth = Math.max(estimatedDepth, inferredDepth);
+    const correctedLayerFootprint = Math.max(
+      this.toNumber(parsed?.cajas_por_capa),
+      topBoxes * correctedDepth,
+      visibleColumns * correctedDepth,
+    );
+    const correctedBoxes =
+      correctedLayerFootprint > 0 && visibleRows > 0
+        ? correctedLayerFootprint * visibleRows
+        : estimatedBoxes;
+
+    parsed.profundidad_estimada = correctedDepth;
+    parsed.cajas_por_capa = correctedLayerFootprint;
+    parsed.capas_estimadas = Math.max(
+      this.toNumber(parsed?.capas_estimadas),
+      visibleRows,
+    );
+
+    return Math.max(estimatedBoxes, correctedBoxes);
+  }
+
   private inferPalletCount(parsed: any, envase: string): number {
     if (!envase.includes('palet') && !envase.includes('palot')) {
       return 0;
@@ -1626,6 +1719,12 @@ export class AiService {
       parsed,
       envase,
       producto,
+      boxes,
+      palletCount,
+    );
+    boxes = this.applySingleTopVisiblePalletCorrection(
+      parsed,
+      envase,
       boxes,
       palletCount,
     );

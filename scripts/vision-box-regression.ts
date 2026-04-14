@@ -115,6 +115,29 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         filas_palets_visibles: 1,
       },
     },
+    synthetic_top_visible_single_pallet_001: {
+      expectedBoxes: 120,
+      expectedPallets: 1,
+      parsed: {
+        producto: 'zapote',
+        envase: 'palet con cajas',
+        vista: 'frontal superior',
+        material_caja: 'carton',
+        medidas_caja: '60x40 cm aprox',
+        columnas_visibles: 5,
+        filas_visibles: 8,
+        profundidad_estimada: 1,
+        cajas_por_capa: 5,
+        capas_estimadas: 8,
+        cajas_superiores: 5,
+        cajas_estimadas: 40,
+        cajas_aprox: 40,
+        numero_palets: 1,
+        bloques_palets_visibles: 1,
+        columnas_palets_visibles: 1,
+        filas_palets_visibles: 1,
+      },
+    },
   };
 }
 
@@ -175,6 +198,27 @@ function buildHelperCases(): HelperRegressionCase[] {
           'palet con cajas',
         ),
         expected: 24,
+      }),
+    },
+    {
+      description: 'isSingleTopVisiblePalletView recognizes elevated single pallet fronts',
+      run: (service) => ({
+        actual: service.isSingleTopVisiblePalletView(
+          {
+            vista: 'frontal superior',
+            columnas_visibles: 5,
+            filas_visibles: 8,
+            profundidad_estimada: 1,
+            cajas_superiores: 5,
+            numero_palets: 1,
+            bloques_palets_visibles: 1,
+            columnas_palets_visibles: 1,
+            filas_palets_visibles: 1,
+            cajas_estimadas: 40,
+          },
+          'palet con cajas',
+        ),
+        expected: true,
       }),
     },
   ];
