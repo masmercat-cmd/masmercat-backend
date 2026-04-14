@@ -2484,15 +2484,7 @@ Rules:
         parsed = await this.zoneRecountPallets(img, parsed);
       }
 
-      let finalized = this.finalizeVisionResult(parsed);
-      const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
-      if (learnedPattern) {
-        finalized = this.applyPatternCorrection(finalized, learnedPattern);
-        this.logVisionSnapshot('Applied pallet pattern correction', {
-          learnedFromId: learnedPattern.id,
-          cajas_estimadas: finalized.cajas_estimadas,
-        });
-      }
+      const finalized = this.finalizeVisionResult(parsed);
 
       finalized.image_hash = imageHash;
       finalized.image_path = options?.imagePath ?? null;
@@ -2522,15 +2514,7 @@ Rules:
         parsed = await this.zoneRecountPallets(img, parsed);
       }
 
-      let finalized = this.finalizeVisionResult(parsed);
-      const learnedPattern = await this.findPatternCorrection(finalized, imageHash);
-      if (learnedPattern) {
-        finalized = this.applyPatternCorrection(finalized, learnedPattern);
-        this.logVisionSnapshot('Applied pallet pattern correction', {
-          learnedFromId: learnedPattern.id,
-          cajas_estimadas: finalized.cajas_estimadas,
-        });
-      }
+      const finalized = this.finalizeVisionResult(parsed);
 
       finalized.image_hash = imageHash;
       finalized.image_path = options?.imagePath ?? null;
