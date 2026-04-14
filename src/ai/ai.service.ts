@@ -2618,6 +2618,25 @@ Rules:
     );
   }
 
+  private shouldRunSingleFrontFaceSupport(stage1: any, stage2: any): boolean {
+    const visibleColumns = this.toNumber(stage2?.columnas_visibles);
+    const visibleRows = this.toNumber(stage2?.filas_visibles);
+    const estimatedDepth = this.toNumber(stage2?.profundidad_estimada);
+    const totalBoxes = this.toNumber(stage2?.cajas_estimadas);
+    const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+
+    return (
+      visibleColumns <= 0 ||
+      visibleRows <= 0 ||
+      totalBoxes <= 0 ||
+      estimatedDepth <= 0 ||
+      totalBoxes <= 80 ||
+      ['diagonal', 'lateral', 'side', 'corner'].some((term) =>
+        view.includes(term),
+      )
+    );
+  }
+
   private shouldRunSinglePalletBoxRescue(
     stage1: any,
     stage2: any,
@@ -2941,10 +2960,6 @@ Rules:
       stage1,
       'single',
     );
-    const frontFaceStage = await this.requestSingleFrontFaceCountStage(
-      imageUrl,
-      stage1,
-    );
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
@@ -2954,24 +2969,29 @@ Rules:
         '\n\nLectura previa del paso 1:\n' +
         JSON.stringify(stage1) +
         '\n\nConteo previo de palets:\n' +
-        JSON.stringify(palletCountStage) +
-        '\n\nConteo previo de cara frontal visible:\n' +
-        JSON.stringify(frontFaceStage),
+        JSON.stringify(palletCountStage),
       'OpenAI single pallet step 2',
-      220,
+      180,
     );
-    stage2.filas_visibles = Math.max(
-      this.toNumber(stage2?.filas_visibles),
-      this.toNumber(frontFaceStage?.filas_visibles_frontal),
-    );
-    stage2.columnas_visibles = Math.max(
-      this.toNumber(stage2?.columnas_visibles),
-      this.toNumber(frontFaceStage?.columnas_visibles_frontal),
-    );
-    stage2.cajas_superiores = Math.max(
-      this.toNumber(stage2?.cajas_superiores),
-      this.toNumber(frontFaceStage?.cajas_superiores_frontal),
-    );
+    let frontFaceStage: any = null;
+    if (this.shouldRunSingleFrontFaceSupport(stage1, stage2)) {
+      frontFaceStage = await this.requestSingleFrontFaceCountStage(
+        imageUrl,
+        stage1,
+      );
+      stage2.filas_visibles = Math.max(
+        this.toNumber(stage2?.filas_visibles),
+        this.toNumber(frontFaceStage?.filas_visibles_frontal),
+      );
+      stage2.columnas_visibles = Math.max(
+        this.toNumber(stage2?.columnas_visibles),
+        this.toNumber(frontFaceStage?.columnas_visibles_frontal),
+      );
+      stage2.cajas_superiores = Math.max(
+        this.toNumber(stage2?.cajas_superiores),
+        this.toNumber(frontFaceStage?.cajas_superiores_frontal),
+      );
+    }
     let stage3 = this.shouldRunSinglePalletStage3(stage1, stage2)
       ? await this.requestVisionJson(
           imageUrl,
@@ -2983,9 +3003,9 @@ Rules:
             '\n\nLectura previa del paso 2:\n' +
             JSON.stringify(stage2) +
             '\n\nConteo frontal exacto:\n' +
-            JSON.stringify(frontFaceStage),
+            JSON.stringify(frontFaceStage ?? {}),
           'OpenAI single pallet step 3',
-          240,
+          180,
         )
       : this.buildFastSinglePalletStage3(stage1, stage2);
 
@@ -3030,7 +3050,7 @@ Rules:
         '\n\nConteo previo de palets:\n' +
         JSON.stringify(palletCountStage),
       'OpenAI two pallet step 2',
-      240,
+      190,
     );
     const stage3 = await this.requestVisionJson(
       imageUrl,
@@ -3043,7 +3063,7 @@ Rules:
         '\n\nLectura previa del paso 2:\n' +
         JSON.stringify(stage2),
       'OpenAI two pallet step 3',
-      240,
+      190,
     );
 
     return this.mergeStagedVisionResult(
@@ -3077,7 +3097,7 @@ Rules:
         '\n\nConteo previo de palets:\n' +
         JSON.stringify(palletCountStage),
       'OpenAI multi pallet step 2',
-      260,
+      210,
     );
     const stage3 = await this.requestVisionJson(
       imageUrl,
@@ -3090,7 +3110,7 @@ Rules:
         '\n\nLectura previa del paso 2:\n' +
         JSON.stringify(stage2),
       'OpenAI multi pallet step 3',
-      320,
+      220,
     );
 
     return this.mergeStagedVisionResult(
