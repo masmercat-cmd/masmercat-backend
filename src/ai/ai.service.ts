@@ -1850,6 +1850,30 @@ export class AiService {
       parsed.cantidad_aprox = totalPieces;
     }
 
+    parsed.debug_vision = {
+      scene_pipeline: `${parsed.scene_pipeline ?? ''}`.trim() || 'unknown',
+      envase_raw: this.normalizeEnvase(parsed.envase),
+      producto_raw: `${parsed.producto ?? parsed.fruta ?? ''}`.trim(),
+      forced_pallet_boxes: this.shouldForcePalletWithBoxes(parsed),
+      single_corner_view: this.isSingleCornerPalletView(parsed, envase),
+      single_top_visible_view: this.isSingleTopVisiblePalletView(parsed, envase),
+      numero_palets: palletCount,
+      columnas_visibles: this.toNumber(parsed.columnas_visibles),
+      filas_visibles: this.toNumber(parsed.filas_visibles),
+      profundidad_estimada: this.toNumber(parsed.profundidad_estimada),
+      cajas_superiores: this.toNumber(parsed.cajas_superiores),
+      cajas_por_capa: this.toNumber(parsed.cajas_por_capa),
+      capas_estimadas: this.toNumber(parsed.capas_estimadas),
+      cajas_estimadas: this.toNumber(parsed.cajas_estimadas),
+      cajas_aprox: this.toNumber(parsed.cajas_aprox),
+      hay_palet: parsed?.hay_palet === true,
+      hay_cajas: parsed?.hay_cajas === true,
+      numero_palets_visibles_base: this.toNumber(parsed?.numero_palets_visibles_base),
+      bloques_palets_visibles: this.toNumber(parsed?.bloques_palets_visibles),
+      columnas_palets_visibles: this.toNumber(parsed?.columnas_palets_visibles),
+      filas_palets_visibles: this.toNumber(parsed?.filas_palets_visibles),
+    };
+
     const tareWeight = isPalot
       ? palletTareKg * Math.max(1, palletCount)
       : envase.includes('palet')
