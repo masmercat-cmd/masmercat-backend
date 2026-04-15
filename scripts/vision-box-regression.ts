@@ -164,6 +164,32 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         filas_palets_visibles: 1,
       },
     },
+    synthetic_top_visible_partial_rows_001: {
+      expectedBoxes: 120,
+      expectedPallets: 1,
+      parsed: {
+        producto: 'zapote',
+        envase: 'palet con cajas',
+        vista: 'frontal superior',
+        hay_palet: true,
+        hay_cajas: true,
+        material_caja: 'carton',
+        medidas_caja: '60x40 cm aprox',
+        columnas_visibles: 5,
+        filas_visibles: 4,
+        profundidad_estimada: 1,
+        cajas_por_capa: 5,
+        capas_estimadas: 4,
+        cajas_superiores: 5,
+        cajas_estimadas: 60,
+        cajas_aprox: 60,
+        numero_palets: 1,
+        numero_palets_visibles_base: 1,
+        bloques_palets_visibles: 1,
+        columnas_palets_visibles: 1,
+        filas_palets_visibles: 1,
+      },
+    },
   };
 }
 

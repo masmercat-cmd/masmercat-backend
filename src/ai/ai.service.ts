@@ -1179,7 +1179,7 @@ export class AiService {
       ) &&
       explicitCount <= 1 &&
       visibleColumns >= 4 &&
-      visibleRows >= 5 &&
+      visibleRows >= 4 &&
       topBoxes >= 4 &&
       topBoxes <= 8 &&
       estimatedDepth <= 1 &&
@@ -1571,6 +1571,14 @@ export class AiService {
       `${parsed?.medidas_palet ?? ''}`.toLowerCase().includes('120x100') ||
       boxMeasures.includes('60x40') ||
       visibleColumns >= 5;
+    const correctedRows =
+      likelyIndustrial &&
+      topBoxes >= 4 &&
+      topBoxes <= 6 &&
+      visibleRows >= 4 &&
+      visibleRows <= 7
+        ? 8
+        : visibleRows;
     const inferredDepth =
       likelyIndustrial && topBoxes >= 4 && topBoxes <= 6
         ? 3
@@ -1584,16 +1592,17 @@ export class AiService {
       visibleColumns * correctedDepth,
     );
     const correctedBoxes =
-      correctedLayerFootprint > 0 && visibleRows > 0
-        ? correctedLayerFootprint * visibleRows
+      correctedLayerFootprint > 0 && correctedRows > 0
+        ? correctedLayerFootprint * correctedRows
         : estimatedBoxes;
 
     parsed.profundidad_estimada = correctedDepth;
     parsed.cajas_por_capa = correctedLayerFootprint;
     parsed.capas_estimadas = Math.max(
       this.toNumber(parsed?.capas_estimadas),
-      visibleRows,
+      correctedRows,
     );
+    parsed.filas_visibles = Math.max(visibleRows, correctedRows);
 
     return Math.max(estimatedBoxes, correctedBoxes);
   }
