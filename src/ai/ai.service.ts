@@ -1878,6 +1878,11 @@ export class AiService {
       `dbg top:${parsed.debug_vision.cajas_superiores} capa:${parsed.debug_vision.cajas_por_capa} box:${parsed.debug_vision.cajas_estimadas}` +
       ` fp:${parsed.debug_vision.forced_pallet_boxes ? '1' : '0'}` +
       ` tv:${parsed.debug_vision.single_top_visible_view ? '1' : '0'}`;
+    parsed.medidas_caja = `dbg c:${parsed.debug_vision.columnas_visibles} r:${parsed.debug_vision.filas_visibles} d:${parsed.debug_vision.profundidad_estimada}`;
+    parsed.medidas_palet =
+      `dbg top:${parsed.debug_vision.cajas_superiores} capa:${parsed.debug_vision.cajas_por_capa}` +
+      ` box:${parsed.debug_vision.cajas_estimadas} fp:${parsed.debug_vision.forced_pallet_boxes ? '1' : '0'}` +
+      ` tv:${parsed.debug_vision.single_top_visible_view ? '1' : '0'}`;
 
     const tareWeight = isPalot
       ? palletTareKg * Math.max(1, palletCount)
