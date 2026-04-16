@@ -3,8 +3,11 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
+import axios from 'axios';
 import OpenAI from 'openai';
 import { PDFParse } from 'pdf-parse';
+import { join } from 'path';
 import { Repository } from 'typeorm';
 import { AiScanResult, User } from '../entities';
 
@@ -26,6 +29,39 @@ export class TransportTariffDto {
   palletType?: string;
 }
 
+type ValidatedVisionReference = {
+  referenceId: string;
+  product: string;
+  packaging: string;
+  view: string;
+  realPallets: number;
+  realBoxes: number;
+  boxesExact: boolean;
+  palletsExact: boolean;
+};
+
+type ExternalVisionDetection = {
+  label: string;
+  confidence: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type ExternalVisionSummary = {
+  provider: string;
+  palletCount: number;
+  boxCount: number;
+  visibleColumns: number;
+  visibleRows: number;
+  estimatedDepth: number;
+  topBoxes: number;
+  confidence: number;
+  detections: ExternalVisionDetection[];
+  raw: any;
+};
+
 @Injectable()
 export class AiService {
   private openai: OpenAI;
@@ -35,6 +71,7 @@ export class AiService {
   >();
   private readonly weightAdjustmentAudit: Array<Record<string, any>> = [];
   private readonly stagedVisionAudit: Array<Record<string, any>> = [];
+  private validatedVisionReferencesCache: ValidatedVisionReference[] | null = null;
 
   private logVisionSnapshot(label: string, payload: any): void {
     try {
@@ -94,6 +131,17 @@ export class AiService {
     return Math.min(max, Math.max(min, value));
   }
 
+  private pickFirstNonEmptyString(...values: any[]): string {
+    for (const value of values) {
+      const normalized = `${value ?? ''}`.trim();
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+
+    return '';
+  }
+
   private normalizeEnvase(value: any): string {
     return `${value ?? ''}`.trim().toLowerCase();
   }
@@ -115,6 +163,12 @@ export class AiService {
       nectarines: 'nectarina',
       nectarinas: 'nectarina',
       granadas: 'granada',
+      melones: 'melon',
+      cantaloupe: 'melon',
+      cantalupo: 'melon',
+      galia: 'melon',
+      'piel de sapo': 'melon',
+      sandias: 'sandia',
       peachs: 'melocoton',
     };
 
@@ -136,6 +190,14 @@ export class AiService {
 
     if (normalized.includes('granada')) {
       return 'granada';
+    }
+
+    if (normalized.includes('melon')) {
+      return 'melon';
+    }
+
+    if (normalized.includes('sandia')) {
+      return 'sandia';
     }
 
     return normalized;
@@ -160,6 +222,227 @@ export class AiService {
       .trim();
   }
 
+  private parseCsvLine(line: string): string[] {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+
+      if (char === ',' && !inQuotes) {
+        values.push(current);
+        current = '';
+        continue;
+      }
+
+      current += char;
+    }
+
+    values.push(current);
+    return values;
+  }
+
+  private loadValidatedVisionReferences(): ValidatedVisionReference[] {
+    if (this.validatedVisionReferencesCache) {
+      return this.validatedVisionReferencesCache;
+    }
+
+    try {
+      const csvPath = join(
+        process.cwd(),
+        'vision-dataset',
+        'validated_reference_cases.csv',
+      );
+      const content = readFileSync(csvPath, 'utf8');
+      const lines = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+      const [headerLine, ...rowLines] = lines;
+      if (!headerLine) {
+        this.validatedVisionReferencesCache = [];
+        return this.validatedVisionReferencesCache;
+      }
+
+      const headers = this.parseCsvLine(headerLine);
+      const rows = rowLines
+        .map((line) => {
+          const values = this.parseCsvLine(line);
+          const row: Record<string, string> = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] ?? '';
+          });
+          return row;
+        })
+        .map((row) => ({
+          referenceId: `${row.reference_id ?? ''}`.trim(),
+          product: this.normalizeProducto(row.product),
+          packaging: this.normalizeEnvase(row.packaging),
+          view: `${row.view ?? ''}`.trim().toLowerCase(),
+          realPallets: this.toNumber(row.real_pallets),
+          realBoxes: this.toNumber(row.real_boxes),
+          boxesExact: `${row.boxes_exact ?? ''}`.trim().toLowerCase() === 'yes',
+          palletsExact:
+            `${row.pallets_exact ?? ''}`.trim().toLowerCase() === 'yes',
+        }))
+        .filter(
+          (row) =>
+            row.referenceId.length > 0 &&
+            row.product.length > 0 &&
+            row.packaging.includes('palet') &&
+            row.realBoxes > 0,
+        );
+
+      this.validatedVisionReferencesCache = rows;
+    } catch (error: any) {
+      console.warn(
+        'Validated vision references could not be loaded:',
+        error?.message || error,
+      );
+      this.validatedVisionReferencesCache = [];
+    }
+
+    return this.validatedVisionReferencesCache;
+  }
+
+  private computeValidatedReferenceScore(
+    parsed: any,
+    envase: string,
+    producto: string,
+    candidate: ValidatedVisionReference,
+  ): number {
+    if (!envase.includes('palet') || !candidate.packaging.includes('palet')) {
+      return 0;
+    }
+
+    if (!producto || producto !== candidate.product) {
+      return 0;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const palletCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      1,
+    );
+
+    let score = 10;
+
+    if (candidate.view && view === candidate.view) {
+      score += 8;
+    } else if (
+      candidate.view.includes('corner') &&
+      this.isSingleCornerPalletView(parsed, envase)
+    ) {
+      score += 6;
+    } else if (candidate.view.length > 0) {
+      score -= 4;
+    }
+
+    if (candidate.palletsExact && candidate.realPallets > 0) {
+      if (palletCount !== candidate.realPallets) {
+        return 0;
+      }
+      score += 6;
+    }
+
+    if (visibleColumns >= 2 && visibleColumns <= 4) {
+      score += 3;
+    }
+    if (visibleRows >= 8 && visibleRows <= 24) {
+      score += 3;
+    }
+    if (estimatedDepth <= 4) {
+      score += 2;
+    }
+    if (topBoxes <= 10) {
+      score += 1;
+    }
+    if (boxMeasures.includes('60x40') || boxMeasures.length === 0) {
+      score += 2;
+    }
+
+    return score;
+  }
+
+  private applyValidatedReferenceModel(
+    parsed: any,
+    envase: string,
+    producto: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): { boxes: number; referenceId: string | null } {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return { boxes: estimatedBoxes, referenceId: null };
+    }
+
+    const references = this.loadValidatedVisionReferences().filter(
+      (candidate) => candidate.boxesExact,
+    );
+    if (references.length === 0) {
+      return { boxes: estimatedBoxes, referenceId: null };
+    }
+
+    let best: ValidatedVisionReference | null = null;
+    let bestScore = 0;
+
+    for (const candidate of references) {
+      const score = this.computeValidatedReferenceScore(
+        parsed,
+        envase,
+        producto,
+        candidate,
+      );
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+
+    if (!best || bestScore < 22 || estimatedBoxes >= best.realBoxes) {
+      return { boxes: estimatedBoxes, referenceId: null };
+    }
+
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    if (`${parsed?.medidas_caja ?? ''}`.trim().length === 0) {
+      parsed.medidas_caja = '60x40 cm aprox';
+    }
+    parsed.profundidad_estimada = Math.max(
+      estimatedDepth,
+      best.realBoxes >= 180 ? 4 : 3,
+    );
+    parsed.cajas_por_capa = Math.max(
+      this.toNumber(parsed?.cajas_por_capa),
+      best.realBoxes >= 180 ? 8 : 6,
+    );
+    parsed.capas_estimadas = Math.max(
+      this.toNumber(parsed?.capas_estimadas),
+      Math.round(
+        best.realBoxes / Math.max(1, this.toNumber(parsed?.cajas_por_capa)),
+      ),
+      this.toNumber(parsed?.filas_visibles),
+    );
+
+    return { boxes: Math.max(estimatedBoxes, best.realBoxes), referenceId: best.referenceId };
+  }
+
   private normalizeStringArray(value: any): string[] {
     const rawValues = Array.isArray(value)
       ? value
@@ -170,6 +453,318 @@ export class AiService {
     return rawValues
       .map((entry) => `${entry ?? ''}`.trim())
       .filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+  }
+
+  private isExternalVisionEnabled(): boolean {
+    return `${this.configService.get<string>('ML_VISION_ENDPOINT') ?? ''}`.trim().length > 0;
+  }
+
+  private parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+    const normalized = `${value ?? ''}`.trim().toLowerCase();
+    if (!normalized) {
+      return fallback;
+    }
+
+    return ['1', 'true', 'yes', 'on'].includes(normalized);
+  }
+
+  private normalizeDetectionLabel(value: any): string {
+    const normalized = `${value ?? ''}`.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const aliases: Record<string, string> = {
+      palet: 'pallet',
+      pallet_base: 'pallet',
+      pallet_block: 'pallet',
+      pallet_footprint: 'pallet',
+      palet_base: 'pallet',
+      box_face: 'box',
+      carton_box: 'box',
+      crate: 'box',
+      front_face_box: 'box',
+      side_face_box: 'box',
+      caja: 'box',
+      cajas: 'box',
+    };
+
+    return aliases[normalized] ?? normalized;
+  }
+
+  private clusterDetectionCenters(values: number[], tolerance: number): number {
+    if (values.length === 0) {
+      return 0;
+    }
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const clusters: number[] = [sorted[0]];
+
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (Math.abs(sorted[i] - clusters[clusters.length - 1]) > tolerance) {
+        clusters.push(sorted[i]);
+      }
+    }
+
+    return clusters.length;
+  }
+
+  private normalizeExternalVisionResponse(payload: any): ExternalVisionSummary | null {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const summary = payload.summary && typeof payload.summary === 'object' ? payload.summary : payload;
+    const rawDetections = Array.isArray(payload.detections)
+      ? payload.detections
+      : Array.isArray(summary?.detections)
+        ? summary.detections
+        : [];
+
+    const detections: ExternalVisionDetection[] = rawDetections
+      .map((item: any) => {
+        const bbox = item?.bbox && typeof item.bbox === 'object' ? item.bbox : item;
+        const x = this.toNumber(
+          bbox?.x ?? bbox?.left ?? bbox?.x1 ?? bbox?.xmin ?? 0,
+        );
+        const y = this.toNumber(
+          bbox?.y ?? bbox?.top ?? bbox?.y1 ?? bbox?.ymin ?? 0,
+        );
+        const x2 = this.toNumber(bbox?.x2 ?? bbox?.right ?? bbox?.xmax ?? 0);
+        const y2 = this.toNumber(bbox?.y2 ?? bbox?.bottom ?? bbox?.ymax ?? 0);
+        const width = this.toNumber(
+          bbox?.width ?? (x2 > x ? x2 - x : 0),
+        );
+        const height = this.toNumber(
+          bbox?.height ?? (y2 > y ? y2 - y : 0),
+        );
+
+        return {
+          label: this.normalizeDetectionLabel(
+            item?.label ?? item?.class ?? item?.class_name ?? item?.name,
+          ),
+          confidence: this.toNumber(item?.confidence ?? item?.score ?? item?.probability),
+          x,
+          y,
+          width,
+          height,
+        };
+      })
+      .filter((item) => item.label.length > 0);
+
+    const palletDetections = detections.filter((item) => item.label === 'pallet');
+    const boxDetections = detections.filter((item) => item.label === 'box');
+    const avgBoxWidth =
+      boxDetections.length > 0
+        ? boxDetections.reduce((sum, item) => sum + Math.max(item.width, 1), 0) /
+          boxDetections.length
+        : 0;
+    const avgBoxHeight =
+      boxDetections.length > 0
+        ? boxDetections.reduce((sum, item) => sum + Math.max(item.height, 1), 0) /
+          boxDetections.length
+        : 0;
+
+    const estimatedColumns =
+      boxDetections.length > 0
+        ? this.clusterDetectionCenters(
+            boxDetections.map((item) => item.x + item.width / 2),
+            Math.max(12, avgBoxWidth * 0.55),
+          )
+        : 0;
+    const estimatedRows =
+      boxDetections.length > 0
+        ? this.clusterDetectionCenters(
+            boxDetections.map((item) => item.y + item.height / 2),
+            Math.max(12, avgBoxHeight * 0.55),
+          )
+        : 0;
+
+    const palletCount = Math.max(
+      this.toNumber(summary?.pallet_count ?? summary?.palletCount),
+      palletDetections.length,
+    );
+    const boxCount = Math.max(
+      this.toNumber(summary?.box_count ?? summary?.boxes ?? summary?.boxCount),
+      boxDetections.length,
+    );
+    const visibleColumns = Math.max(
+      this.toNumber(summary?.visible_columns ?? summary?.visibleColumns),
+      estimatedColumns,
+    );
+    const visibleRows = Math.max(
+      this.toNumber(summary?.visible_rows ?? summary?.visibleRows),
+      estimatedRows,
+    );
+    const estimatedDepth = this.toNumber(
+      summary?.estimated_depth ?? summary?.depth ?? summary?.estimatedDepth,
+    );
+    const topBoxes = Math.max(
+      this.toNumber(summary?.top_boxes ?? summary?.topBoxes),
+      visibleColumns,
+    );
+    const confidenceCandidates = [
+      this.toNumber(summary?.confidence),
+      ...detections.map((item) => item.confidence),
+    ].filter((value) => value > 0);
+    const confidence =
+      confidenceCandidates.length > 0
+        ? confidenceCandidates.reduce((sum, value) => sum + value, 0) /
+          confidenceCandidates.length
+        : 0;
+
+    return {
+      provider: `${payload.provider ?? summary?.provider ?? 'external_ml'}`.trim(),
+      palletCount,
+      boxCount,
+      visibleColumns,
+      visibleRows,
+      estimatedDepth,
+      topBoxes,
+      confidence,
+      detections,
+      raw: payload,
+    };
+  }
+
+  private mergeExternalVisionSummary(parsed: any, external: ExternalVisionSummary): any {
+    if (!external) {
+      return parsed;
+    }
+
+    const merged = { ...parsed };
+    const minConfidence = this.toNumber(
+      this.configService.get<string>('ML_VISION_MIN_CONFIDENCE') ?? '0.45',
+    );
+    const preferDetectorCounts = this.parseBooleanEnv(
+      this.configService.get<string>('ML_VISION_PREFER_DETECTOR'),
+      true,
+    );
+    const isTrusted = external.confidence <= 0 || external.confidence >= minConfidence;
+
+    if (!isTrusted) {
+      merged.external_vision = {
+        provider: external.provider,
+        confidence: Number(external.confidence.toFixed(3)),
+        ignored: true,
+        reason: 'low_confidence',
+      };
+      return merged;
+    }
+
+    const currentBoxes = Math.max(
+      this.toNumber(merged?.cajas_estimadas),
+      this.toNumber(merged?.cajas_aprox),
+    );
+    const currentPallets = Math.max(
+      this.toNumber(merged?.numero_palets),
+      this.toNumber(merged?.pallet_count),
+      1,
+    );
+
+    if (external.palletCount > 0) {
+      merged.numero_palets = preferDetectorCounts
+        ? external.palletCount
+        : Math.max(currentPallets, external.palletCount);
+      merged.pallet_count = merged.numero_palets;
+      merged.numero_palets_visibles_base = Math.max(
+        this.toNumber(merged?.numero_palets_visibles_base),
+        external.palletCount,
+      );
+      merged.bloques_palets_visibles = Math.max(
+        this.toNumber(merged?.bloques_palets_visibles),
+        external.palletCount,
+      );
+    }
+
+    if (external.boxCount > 0) {
+      const mergedBoxes = preferDetectorCounts
+        ? external.boxCount
+        : Math.max(currentBoxes, external.boxCount);
+      merged.cajas_estimadas = mergedBoxes;
+      merged.cajas_aprox = mergedBoxes;
+    }
+
+    if (external.visibleColumns > 0) {
+      merged.columnas_visibles = preferDetectorCounts
+        ? external.visibleColumns
+        : Math.max(this.toNumber(merged?.columnas_visibles), external.visibleColumns);
+    }
+    if (external.visibleRows > 0) {
+      merged.filas_visibles = preferDetectorCounts
+        ? external.visibleRows
+        : Math.max(this.toNumber(merged?.filas_visibles), external.visibleRows);
+    }
+    if (external.estimatedDepth > 0) {
+      merged.profundidad_estimada = preferDetectorCounts
+        ? external.estimatedDepth
+        : Math.max(this.toNumber(merged?.profundidad_estimada), external.estimatedDepth);
+    }
+    if (external.topBoxes > 0) {
+      merged.cajas_superiores = preferDetectorCounts
+        ? external.topBoxes
+        : Math.max(this.toNumber(merged?.cajas_superiores), external.topBoxes);
+    }
+
+    merged.external_vision = {
+      provider: external.provider,
+      confidence: Number(external.confidence.toFixed(3)),
+      pallet_count: external.palletCount,
+      box_count: external.boxCount,
+      visible_columns: external.visibleColumns,
+      visible_rows: external.visibleRows,
+      estimated_depth: external.estimatedDepth,
+      top_boxes: external.topBoxes,
+      detections: external.detections.length,
+      applied: true,
+    };
+
+    return merged;
+  }
+
+  private async requestExternalVisionSummary(
+    base64Image: string,
+    imageHash: string,
+  ): Promise<ExternalVisionSummary | null> {
+    const endpoint = `${this.configService.get<string>('ML_VISION_ENDPOINT') ?? ''}`.trim();
+    if (!endpoint) {
+      return null;
+    }
+
+    const apiKey = `${this.configService.get<string>('ML_VISION_API_KEY') ?? ''}`.trim();
+    const timeoutMs = Math.max(
+      1000,
+      Math.round(
+        this.toNumber(this.configService.get<string>('ML_VISION_TIMEOUT_MS')) || 8000,
+      ),
+    );
+
+    try {
+      const response = await axios.post(
+        endpoint,
+        {
+          image: base64Image,
+          mime_type: 'image/jpeg',
+          image_hash: imageHash,
+          task: 'pallet_box_count',
+        },
+        {
+          timeout: timeoutMs,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          },
+        },
+      );
+
+      const normalized = this.normalizeExternalVisionResponse(response.data);
+      if (normalized) {
+        this.logVisionSnapshot('External ML vision summary', normalized);
+      }
+      return normalized;
+    } catch (error: any) {
+      console.warn(
+        'External ML vision request failed:',
+        error?.message || error,
+      );
+      return null;
+    }
   }
 
   private buildRouteOptions(
@@ -959,12 +1554,14 @@ export class AiService {
       limon: 40,
       mandarina: 40,
       manzana: 40,
+      melon: 5,
       melocoton: 20,
       nectarina: 20,
       naranja: 36,
       paraguayo: 20,
       pera: 36,
       pimiento: 14,
+      sandia: 1,
       tomate: 20,
       uva: 10,
     };
@@ -1182,7 +1779,7 @@ export class AiService {
       visibleRows >= 4 &&
       topBoxes >= 4 &&
       topBoxes <= 8 &&
-      estimatedDepth <= 1 &&
+      estimatedDepth <= 2 &&
       totalBoxes <= 80
     );
   }
@@ -1480,71 +2077,6 @@ export class AiService {
     return Math.max(estimatedBoxes, 184);
   }
 
-  private applyValidatedReferenceCornerFloor(
-    parsed: any,
-    envase: string,
-    producto: string,
-    estimatedBoxes: number,
-    palletCount: number,
-  ): number {
-    if (!envase.includes('palet') || palletCount !== 1) {
-      return estimatedBoxes;
-    }
-
-    if (!this.isSingleCornerPalletView(parsed, envase)) {
-      return estimatedBoxes;
-    }
-
-    const productFloors: Record<string, number> = {
-      granada: 144,
-      melocoton: 184,
-      nectarina: 184,
-      paraguayo: 184,
-    };
-    const validatedFloor = productFloors[producto];
-    if (!validatedFloor || estimatedBoxes >= validatedFloor) {
-      return estimatedBoxes;
-    }
-
-    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
-    const visibleRows = this.toNumber(parsed?.filas_visibles);
-    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
-    const topBoxes = this.toNumber(parsed?.cajas_superiores);
-    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
-    const likelyReferenceShape =
-      visibleColumns >= 2 &&
-      visibleColumns <= 4 &&
-      visibleRows >= 8 &&
-      visibleRows <= 24 &&
-      estimatedDepth <= 4 &&
-      topBoxes <= 10 &&
-      (boxMeasures.includes('60x40') || boxMeasures.length === 0);
-
-    if (!likelyReferenceShape) {
-      return estimatedBoxes;
-    }
-
-    parsed.profundidad_estimada = Math.max(
-      estimatedDepth,
-      validatedFloor >= 180 ? 4 : 3,
-    );
-    parsed.cajas_por_capa = Math.max(
-      this.toNumber(parsed?.cajas_por_capa),
-      validatedFloor >= 180 ? 8 : 6,
-    );
-    parsed.capas_estimadas = Math.max(
-      this.toNumber(parsed?.capas_estimadas),
-      Math.round(validatedFloor / Math.max(1, this.toNumber(parsed?.cajas_por_capa))),
-      visibleRows,
-    );
-
-    if (boxMeasures.length === 0) {
-      parsed.medidas_caja = '60x40 cm aprox';
-    }
-
-    return Math.max(estimatedBoxes, validatedFloor);
-  }
-
   private applySingleTopVisiblePalletCorrection(
     parsed: any,
     envase: string,
@@ -1605,6 +2137,125 @@ export class AiService {
     parsed.filas_visibles = Math.max(visibleRows, correctedRows);
 
     return Math.max(estimatedBoxes, correctedBoxes);
+  }
+
+  private applyOpenTopFruitDisplayCorrection(
+    parsed: any,
+    envase: string,
+    producto: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    if (!this.isSingleTopVisiblePalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const material = `${parsed?.material_caja ?? ''}`.trim().toLowerCase();
+    const candidateProduct = this.normalizeProducto(producto);
+    const likelyLargeFruit =
+      !candidateProduct ||
+      ['melon', 'sandia'].includes(candidateProduct) ||
+      candidateProduct.includes('zapote');
+    const likelyOpenTopDisplay =
+      visibleColumns >= 4 &&
+      visibleColumns <= 5 &&
+      visibleRows >= 4 &&
+      visibleRows <= 6 &&
+      topBoxes >= 4 &&
+      topBoxes <= 5 &&
+      estimatedDepth <= 2 &&
+      estimatedBoxes <= 100 &&
+      (material.includes('cart') || material.length === 0);
+
+    if (!likelyLargeFruit || !likelyOpenTopDisplay) {
+      return estimatedBoxes;
+    }
+
+    parsed.profundidad_estimada = Math.max(estimatedDepth, 3);
+    parsed.cajas_por_capa = Math.max(this.toNumber(parsed?.cajas_por_capa), 15);
+    parsed.capas_estimadas = Math.max(this.toNumber(parsed?.capas_estimadas), 8);
+    if (`${parsed?.medidas_caja ?? ''}`.trim().length === 0) {
+      parsed.medidas_caja = 'caja abierta de fruta grande';
+    }
+
+    return Math.max(estimatedBoxes, 120);
+  }
+
+  private shouldRescueCommercialIdentity(parsed: any): boolean {
+    const envase = this.normalizeEnvase(parsed?.envase);
+    const producto = this.normalizeProducto(parsed?.producto ?? parsed?.fruta);
+    const boxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const pieces = this.toNumber(parsed?.piezas_por_caja);
+
+    return (
+      envase.includes('palet') &&
+      boxes > 0 &&
+      (producto.length === 0 || pieces <= 0)
+    );
+  }
+
+  private async rescueCommercialIdentity(
+    imageUrl: string,
+    parsed: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      imageUrl,
+      [
+        'Analiza esta imagen comercial de fruta o verdura.',
+        '',
+        'Paso de rescate solamente: identifica el producto comercial y piezas por caja.',
+        'Usa la morfologia visible de la fruta y cualquier texto o marca visible en la caja.',
+        '',
+        'Devuelve SOLO JSON valido:',
+        '{',
+        '  "categoria": "fruta/verdura/hongo",',
+        '  "producto": "melon/sandia/kiwi/melocoton/paraguayo/nectarina/granada/zapote/etc",',
+        '  "material_caja": "carton/madera/plastico/desconocido",',
+        '  "piezas_por_caja": 0,',
+        '  "confianza_producto": "alta/media/baja"',
+        '}',
+        '',
+        'Reglas:',
+        '- No cambies el numero de palets.',
+        '- No cambies el total de cajas.',
+        '- Si la fruta parece melon o sandia, prioriza esa lectura frente a respuestas vacias.',
+        '- Si ves texto util en la caja, usalo como pista.',
+        '',
+        'Contexto actual:',
+        JSON.stringify(parsed),
+      ].join('\n'),
+      'OpenAI commercial identity rescue',
+      140,
+    );
+
+    return {
+      ...parsed,
+      categoria: this.pickFirstNonEmptyString(rescue?.categoria, parsed?.categoria) || null,
+      producto: this.pickFirstNonEmptyString(rescue?.producto, parsed?.producto, parsed?.fruta) || null,
+      material_caja:
+        this.pickFirstNonEmptyString(rescue?.material_caja, parsed?.material_caja) || null,
+      piezas_por_caja: Math.max(
+        this.toNumber(parsed?.piezas_por_caja),
+        this.toNumber(rescue?.piezas_por_caja),
+      ),
+      identity_rescue: {
+        applied: true,
+        producto: this.pickFirstNonEmptyString(rescue?.producto),
+        piezas_por_caja: this.toNumber(rescue?.piezas_por_caja),
+        confianza_producto: `${rescue?.confianza_producto ?? ''}`.trim(),
+      },
+    };
   }
 
   private inferPalletCount(parsed: any, envase: string): number {
@@ -1724,11 +2375,29 @@ export class AiService {
     }
     const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
     const looseTerms = ['sin caja', 'suelto', 'suelta', 'loose', 'a granel'];
+    const hasStructuredPackagingHints =
+      this.toNumber(parsed?.numero_palets) > 0 ||
+      this.toNumber(parsed?.pallet_count) > 0 ||
+      this.toNumber(parsed?.numero_palets_visibles_base) > 0 ||
+      this.toNumber(parsed?.bloques_palets_visibles) > 0 ||
+      this.toNumber(parsed?.columnas_visibles) > 0 ||
+      this.toNumber(parsed?.filas_visibles) > 0 ||
+      this.toNumber(parsed?.cajas_estimadas) > 0 ||
+      this.toNumber(parsed?.cajas_aprox) > 0 ||
+      parsed?.hay_palet === true ||
+      parsed?.hay_cajas === true;
     const looksLoose =
       looseTerms.some((term) => envase.includes(term)) ||
-      (!envase.includes('caja') &&
+      (envase.length > 0 &&
+        !hasStructuredPackagingHints &&
+        !envase.includes('caja') &&
         !envase.includes('palet') &&
         !envase.includes('palot'));
+
+    if (!envase && hasStructuredPackagingHints) {
+      envase = 'palet con cajas';
+      parsed.envase = 'palet con cajas';
+    }
 
     if (looksLoose) {
       envase = 'sin caja';
@@ -1761,16 +2430,24 @@ export class AiService {
       boxes,
       palletCount,
     );
-    boxes = this.applyValidatedReferenceCornerFloor(
+    const validatedReferenceMatch = this.applyValidatedReferenceModel(
       parsed,
       envase,
       producto,
       boxes,
       palletCount,
     );
+    boxes = validatedReferenceMatch.boxes;
     boxes = this.applySingleTopVisiblePalletCorrection(
       parsed,
       envase,
+      boxes,
+      palletCount,
+    );
+    boxes = this.applyOpenTopFruitDisplayCorrection(
+      parsed,
+      envase,
+      producto,
       boxes,
       palletCount,
     );
@@ -1866,6 +2543,11 @@ export class AiService {
       capas_estimadas: this.toNumber(parsed.capas_estimadas),
       cajas_estimadas: this.toNumber(parsed.cajas_estimadas),
       cajas_aprox: this.toNumber(parsed.cajas_aprox),
+      validated_reference_id: validatedReferenceMatch.referenceId,
+      external_vision_provider: `${parsed?.external_vision?.provider ?? ''}`.trim(),
+      external_vision_confidence: this.toNumber(parsed?.external_vision?.confidence),
+      external_vision_boxes: this.toNumber(parsed?.external_vision?.box_count),
+      external_vision_pallets: this.toNumber(parsed?.external_vision?.pallet_count),
       hay_palet: parsed?.hay_palet === true,
       hay_cajas: parsed?.hay_cajas === true,
       numero_palets_visibles_base: this.toNumber(parsed?.numero_palets_visibles_base),
@@ -2759,6 +3441,18 @@ Rules:
       if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
         parsed = await this.zoneRecountPallets(img, parsed);
       }
+      if (!(options?.fastMode == true) && this.shouldRescueCommercialIdentity(parsed)) {
+        parsed = await this.rescueCommercialIdentity(
+          'data:image/jpeg;base64,' + img,
+          parsed,
+        );
+      }
+      if (this.isExternalVisionEnabled()) {
+        const externalVision = await this.requestExternalVisionSummary(img, imageHash);
+        if (externalVision) {
+          parsed = this.mergeExternalVisionSummary(parsed, externalVision);
+        }
+      }
 
       const finalized = this.finalizeVisionResult(parsed);
 
@@ -2788,6 +3482,18 @@ Rules:
       }
       if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
         parsed = await this.zoneRecountPallets(img, parsed);
+      }
+      if (!(options?.fastMode == true) && this.shouldRescueCommercialIdentity(parsed)) {
+        parsed = await this.rescueCommercialIdentity(
+          'data:image/jpeg;base64,' + img,
+          parsed,
+        );
+      }
+      if (this.isExternalVisionEnabled()) {
+        const externalVision = await this.requestExternalVisionSummary(img, imageHash);
+        if (externalVision) {
+          parsed = this.mergeExternalVisionSummary(parsed, externalVision);
+        }
       }
 
       const finalized = this.finalizeVisionResult(parsed);
@@ -3413,10 +4119,24 @@ Rules:
       ...stage1,
       ...stage2,
       ...stage3,
-      categoria: stage3?.categoria ?? stage1?.categoria,
-      producto: stage3?.producto ?? stage1?.producto ?? stage3?.fruta,
-      envase: stage3?.envase ?? stage1?.envase,
-      material_caja: stage3?.material_caja ?? stage1?.material_caja,
+      categoria: this.pickFirstNonEmptyString(
+        stage3?.categoria,
+        stage1?.categoria,
+      ) || null,
+      producto:
+        this.pickFirstNonEmptyString(
+          stage3?.producto,
+          stage1?.producto,
+          stage3?.fruta,
+          stage1?.fruta,
+        ) || null,
+      envase:
+        this.pickFirstNonEmptyString(stage3?.envase, stage1?.envase) || null,
+      material_caja:
+        this.pickFirstNonEmptyString(
+          stage3?.material_caja,
+          stage1?.material_caja,
+        ) || null,
       numero_palets:
         this.toNumber(stage3?.numero_palets) ||
         this.toNumber(palletCountStage?.numero_palets) ||
@@ -3629,6 +4349,8 @@ Rules:
         '- Usa terminologia agricola de Espana.',
         '- Si identificas "durazno", devuelve "melocoton".',
         '- Distingue bien melocoton, paraguayo y nectarina.',
+        '- Intenta identificar tambien melon, sandia, granada, kiwi o zapote si aparecen.',
+        '- Usa la forma visible del fruto y cualquier texto visible en la caja como pista de producto.',
         '- Todavia no calcules cajas totales ni peso.',
         '- Si solo ves fruta suelta, devuelve envase "sin caja".',
       ].join('\n'),
@@ -3705,6 +4427,8 @@ Rules:
         'Reglas:',
         '- Basa la respuesta en la identificacion previa y en el conteo estructural previo.',
         '- No reinicies el analisis desde cero.',
+        '- Si el producto se puede leer por la fruta visible o por texto en la caja, no lo dejes vacio.',
+        '- Si hay melones o sandias en caja abierta, intenta estimar piezas_por_caja.',
         '- Si la fruta esta suelta, pon cajas_estimadas y piezas_por_caja a 0 y cuenta solo las piezas visibles.',
         '- Si hay palets, manten la coherencia con la estructura contada.',
         '- Si la estructura contada sugiere un total comercial de cajas, el peso debe quedarse cerca de esa estructura y no dispararse por encima o por debajo.',

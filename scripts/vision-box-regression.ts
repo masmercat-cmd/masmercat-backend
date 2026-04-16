@@ -190,6 +190,31 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         filas_palets_visibles: 1,
       },
     },
+    synthetic_open_top_large_fruit_partial_front_001: {
+      expectedBoxes: 120,
+      expectedPallets: 1,
+      parsed: {
+        producto: '',
+        envase: 'palet con cajas',
+        vista: 'frontal superior',
+        hay_palet: true,
+        hay_cajas: true,
+        material_caja: 'carton',
+        columnas_visibles: 4,
+        filas_visibles: 5,
+        profundidad_estimada: 2,
+        cajas_por_capa: 8,
+        capas_estimadas: 5,
+        cajas_superiores: 4,
+        cajas_estimadas: 40,
+        cajas_aprox: 40,
+        numero_palets: 1,
+        numero_palets_visibles_base: 1,
+        bloques_palets_visibles: 1,
+        columnas_palets_visibles: 1,
+        filas_palets_visibles: 1,
+      },
+    },
   };
 }
 
@@ -292,6 +317,73 @@ function buildHelperCases(): HelperRegressionCase[] {
         expected: true,
       }),
     },
+    {
+      description: 'mergeExternalVisionSummary applies detector counts when confidence is solid',
+      run: (service) => ({
+        actual: service.mergeExternalVisionSummary(
+          {
+            envase: 'palet con cajas',
+            numero_palets: 1,
+            pallet_count: 1,
+            cajas_estimadas: 54,
+            cajas_aprox: 54,
+            columnas_visibles: 3,
+            filas_visibles: 12,
+          },
+          {
+            provider: 'mock-detector',
+            confidence: 0.91,
+            palletCount: 1,
+            boxCount: 144,
+            visibleColumns: 3,
+            visibleRows: 12,
+            estimatedDepth: 4,
+            topBoxes: 3,
+            detections: [],
+            raw: {},
+          },
+        ).cajas_estimadas,
+        expected: 144,
+      }),
+    },
+    {
+      description: 'mergeStagedVisionResult keeps non-empty producto/envase from stage1 when stage3 sends blanks',
+      run: (service) => ({
+        actual: JSON.stringify(
+          ((merged: any) => ({
+            producto: merged.producto,
+            envase: merged.envase,
+          }))(
+            service.mergeStagedVisionResult(
+              {
+                producto: 'granadas',
+                envase: 'palet con cajas',
+                material_caja: 'plastico',
+                numero_palets_visibles_base: 1,
+              },
+              {
+                columnas_visibles: 3,
+                filas_visibles: 12,
+                profundidad_estimada: 4,
+                cajas_estimadas: 144,
+              },
+              {
+                producto: '',
+                envase: '',
+                cajas_estimadas: 144,
+              },
+              { numero_palets: 1 },
+              'single',
+              'single',
+            ),
+          ),
+        ),
+        expected: JSON.stringify({
+          producto: 'granadas',
+          envase: 'palet con cajas',
+        }),
+      }),
+    },
   ];
 }
 
@@ -304,6 +396,13 @@ function main(): void {
   service.weightAdjustmentAudit = [];
   service.stagedVisionAudit = [];
   service.imageAnalysisCache = new Map();
+  service.configService = {
+    get(key: string) {
+      if (key === 'ML_VISION_MIN_CONFIDENCE') return '0.45';
+      if (key === 'ML_VISION_PREFER_DETECTOR') return 'true';
+      return '';
+    },
+  };
   const failures: string[] = [];
 
   for (const [referenceId, scenario] of Object.entries(scenarios)) {
