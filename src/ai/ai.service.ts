@@ -111,6 +111,15 @@ export class AiService {
       'donut peach': 'paraguayo',
       'donut peaches': 'paraguayo',
       paraguayos: 'paraguayo',
+      apple: 'manzana',
+      apples: 'manzana',
+      manzanas: 'manzana',
+      melon: 'melon',
+      melones: 'melon',
+      watermelon: 'sandia',
+      watermelons: 'sandia',
+      sandias: 'sandia',
+      zapotes: 'zapote',
       nectarine: 'nectarina',
       nectarines: 'nectarina',
       nectarinas: 'nectarina',
@@ -136,6 +145,22 @@ export class AiService {
 
     if (normalized.includes('granada')) {
       return 'granada';
+    }
+
+    if (normalized.includes('manzana')) {
+      return 'manzana';
+    }
+
+    if (normalized.includes('melon')) {
+      return 'melon';
+    }
+
+    if (normalized.includes('sandia')) {
+      return 'sandia';
+    }
+
+    if (normalized.includes('zapote')) {
+      return 'zapote';
     }
 
     return normalized;
@@ -982,6 +1007,49 @@ export class AiService {
     return 0;
   }
 
+  private inferTotalPiecesForPalot(parsed: any, producto: string): number {
+    const explicitTotal = Math.max(
+      this.toNumber(parsed?.cantidad_total_piezas),
+      this.toNumber(parsed?.cantidad_aprox),
+    );
+    if (explicitTotal > 0) {
+      return Math.round(explicitTotal);
+    }
+
+    const avgPieceWeights: Record<string, number> = {
+      aguacate: 0.22,
+      granada: 0.35,
+      kiwi: 0.09,
+      manzana: 0.18,
+      melocoton: 0.17,
+      melon: 1.4,
+      nectarina: 0.16,
+      naranja: 0.2,
+      paraguayo: 0.14,
+      pera: 0.19,
+      sandia: 6.5,
+      tomate: 0.12,
+      zapote: 1.5,
+    };
+
+    const normalizedProduct = this.normalizeProducto(producto);
+    const avgPieceWeight = avgPieceWeights[normalizedProduct];
+    if (!avgPieceWeight || avgPieceWeight <= 0) {
+      return 0;
+    }
+
+    const netWeight = Math.max(
+      this.toNumber(parsed?.peso_neto_kg),
+      this.toNumber(parsed?.peso_bruto_kg) - this.toNumber(parsed?.tara_kg),
+      0,
+    );
+    if (netWeight <= 0) {
+      return 0;
+    }
+
+    return Math.max(1, Math.round(netWeight / avgPieceWeight));
+  }
+
   private inferTarePerBoxKg(parsed: any): number {
     const material = `${parsed.material_caja ?? ''}`.toLowerCase();
 
@@ -1723,12 +1791,33 @@ export class AiService {
       parsed.envase = 'palet con cajas';
     }
     const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
+    if (producto) {
+      parsed.producto = producto;
+    }
     const looseTerms = ['sin caja', 'suelto', 'suelta', 'loose', 'a granel'];
+    const hasStructuredPackagingHints =
+      this.toNumber(parsed?.numero_palets) > 0 ||
+      this.toNumber(parsed?.pallet_count) > 0 ||
+      this.toNumber(parsed?.numero_palets_visibles_base) > 0 ||
+      this.toNumber(parsed?.bloques_palets_visibles) > 0 ||
+      this.toNumber(parsed?.columnas_visibles) > 0 ||
+      this.toNumber(parsed?.filas_visibles) > 0 ||
+      this.toNumber(parsed?.cajas_estimadas) > 0 ||
+      this.toNumber(parsed?.cajas_aprox) > 0 ||
+      parsed?.hay_palet === true ||
+      parsed?.hay_cajas === true;
     const looksLoose =
       looseTerms.some((term) => envase.includes(term)) ||
-      (!envase.includes('caja') &&
+      (envase.length > 0 &&
+        !hasStructuredPackagingHints &&
+        !envase.includes('caja') &&
         !envase.includes('palet') &&
         !envase.includes('palot'));
+
+    if (!envase && hasStructuredPackagingHints) {
+      envase = 'palet con cajas';
+      parsed.envase = 'palet con cajas';
+    }
 
     if (looksLoose) {
       envase = 'sin caja';
@@ -1848,6 +1937,13 @@ export class AiService {
       const totalPieces = Math.round(boxes * piecesPerBox);
       parsed.cantidad_total_piezas = totalPieces;
       parsed.cantidad_aprox = totalPieces;
+    } else if (isPalot) {
+      parsed.piezas_por_caja = 0;
+      const totalPieces = this.inferTotalPiecesForPalot(parsed, producto);
+      if (totalPieces > 0) {
+        parsed.cantidad_total_piezas = totalPieces;
+        parsed.cantidad_aprox = totalPieces;
+      }
     }
 
     parsed.debug_vision = {

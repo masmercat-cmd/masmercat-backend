@@ -6,6 +6,8 @@ type RegressionScenario = {
   parsed: Record<string, any>;
   expectedBoxes: number;
   expectedPallets: number;
+  expectedProduct?: string;
+  expectedTotalPiecesMin?: number;
 };
 
 type HelperRegressionCase = {
@@ -190,6 +192,47 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         filas_palets_visibles: 1,
       },
     },
+    synthetic_blank_envase_but_structured_pallet_001: {
+      expectedBoxes: 120,
+      expectedPallets: 1,
+      parsed: {
+        producto: 'zapote',
+        envase: '',
+        vista: 'frontal superior',
+        hay_palet: true,
+        hay_cajas: true,
+        material_caja: 'carton',
+        medidas_caja: '60x40 cm aprox',
+        columnas_visibles: 5,
+        filas_visibles: 8,
+        profundidad_estimada: 1,
+        cajas_por_capa: 5,
+        capas_estimadas: 8,
+        cajas_superiores: 5,
+        cajas_estimadas: 40,
+        cajas_aprox: 40,
+        numero_palets: 1,
+        numero_palets_visibles_base: 1,
+        bloques_palets_visibles: 1,
+        columnas_palets_visibles: 1,
+        filas_palets_visibles: 1,
+      },
+    },
+    synthetic_palot_apples_piece_estimate_001: {
+      expectedBoxes: 0,
+      expectedPallets: 1,
+      expectedProduct: 'manzana',
+      expectedTotalPiecesMin: 1,
+      parsed: {
+        producto: 'manzanas',
+        envase: 'palot',
+        vista: 'frontal',
+        peso_bruto_kg: 320,
+        tara_kg: 40,
+        peso_neto_kg: 280,
+        numero_palets: 1,
+      },
+    },
   };
 }
 
@@ -310,6 +353,8 @@ function main(): void {
     const result = service.finalizeVisionResult({ ...scenario.parsed });
     const gotBoxes = Number(result?.cajas_estimadas ?? 0);
     const gotPallets = Number(result?.numero_palets ?? 0);
+    const gotProduct = `${result?.producto ?? ''}`.trim().toLowerCase();
+    const gotTotalPieces = Number(result?.cantidad_total_piezas ?? 0);
 
     if (gotBoxes !== scenario.expectedBoxes) {
       failures.push(
@@ -323,8 +368,26 @@ function main(): void {
       );
     }
 
+    if (
+      typeof scenario.expectedProduct === 'string' &&
+      gotProduct !== scenario.expectedProduct
+    ) {
+      failures.push(
+        `${referenceId}: producto=${gotProduct}, esperado=${scenario.expectedProduct}`,
+      );
+    }
+
+    if (
+      typeof scenario.expectedTotalPiecesMin === 'number' &&
+      gotTotalPieces < scenario.expectedTotalPiecesMin
+    ) {
+      failures.push(
+        `${referenceId}: cantidad_total_piezas=${gotTotalPieces}, esperado>=${scenario.expectedTotalPiecesMin}`,
+      );
+    }
+
     console.log(
-      `[vision-regression] ${referenceId} -> cajas=${gotBoxes}, palets=${gotPallets}`,
+      `[vision-regression] ${referenceId} -> cajas=${gotBoxes}, palets=${gotPallets}, producto=${gotProduct}, total=${gotTotalPieces}`,
     );
   }
 
