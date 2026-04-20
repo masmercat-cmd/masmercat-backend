@@ -115,29 +115,6 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         filas_palets_visibles: 1,
       },
     },
-    synthetic_unknown_stonefruit_corner_001: {
-      expectedBoxes: 184,
-      expectedPallets: 1,
-      parsed: {
-        producto: '',
-        envase: 'palet con cajas',
-        vista: 'corner',
-        material_caja: 'carton',
-        medidas_caja: '60x40 cm aprox',
-        columnas_visibles: 4,
-        filas_visibles: 12,
-        profundidad_estimada: 1,
-        cajas_por_capa: 4,
-        capas_estimadas: 12,
-        cajas_superiores: 4,
-        cajas_estimadas: 72,
-        cajas_aprox: 72,
-        numero_palets: 1,
-        bloques_palets_visibles: 1,
-        columnas_palets_visibles: 1,
-        filas_palets_visibles: 1,
-      },
-    },
     synthetic_top_visible_single_pallet_001: {
       expectedBoxes: 120,
       expectedPallets: 1,
@@ -338,22 +315,6 @@ function buildHelperCases(): HelperRegressionCase[] {
           numero_palets_visibles_base: 1,
         }),
         expected: true,
-      }),
-    },
-    {
-      description: 'inferPiecesPerBox falls back to 5 for open-top large fruit displays with missing product',
-      run: (service) => ({
-        actual: service.inferPiecesPerBox(
-          {
-            envase: 'palet con cajas',
-            material_caja: 'carton',
-            columnas_visibles: 4,
-            filas_visibles: 5,
-            cajas_superiores: 4,
-          },
-          '',
-        ),
-        expected: 5,
       }),
     },
     {

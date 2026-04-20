@@ -1572,24 +1572,6 @@ export class AiService {
       return defaults[producto];
     }
 
-    const material = `${parsed?.material_caja ?? ''}`.toLowerCase();
-    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
-    const visibleRows = this.toNumber(parsed?.filas_visibles);
-    const topBoxes = this.toNumber(parsed?.cajas_superiores);
-    if (
-      !producto &&
-      envase.includes('palet') &&
-      visibleColumns >= 4 &&
-      visibleColumns <= 5 &&
-      visibleRows >= 4 &&
-      visibleRows <= 6 &&
-      topBoxes >= 4 &&
-      topBoxes <= 5 &&
-      (material.includes('cart') || material.length === 0)
-    ) {
-      return 5;
-    }
-
     if (boxMeasures.includes('60x40') && ['melocoton', 'nectarina', 'paraguayo'].includes(producto)) {
       return 20;
     }
@@ -1797,7 +1779,7 @@ export class AiService {
       visibleRows >= 4 &&
       topBoxes >= 4 &&
       topBoxes <= 8 &&
-      estimatedDepth <= 1 &&
+      estimatedDepth <= 2 &&
       totalBoxes <= 80
     );
   }
@@ -2168,18 +2150,14 @@ export class AiService {
       return estimatedBoxes;
     }
 
-    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    if (!this.isSingleTopVisiblePalletView(parsed, envase)) {
+      return estimatedBoxes;
+    }
+
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
     const topBoxes = this.toNumber(parsed?.cajas_superiores);
-    const explicitCount = Math.max(
-      this.toNumber(parsed?.numero_palets),
-      this.toNumber(parsed?.pallet_count),
-      this.toNumber(parsed?.bloques_palets_visibles),
-      this.toNumber(parsed?.columnas_palets_visibles) *
-        this.toNumber(parsed?.filas_palets_visibles),
-    );
     const material = `${parsed?.material_caja ?? ''}`.trim().toLowerCase();
     const candidateProduct = this.normalizeProducto(producto);
     const likelyLargeFruit =
@@ -2187,10 +2165,6 @@ export class AiService {
       ['melon', 'sandia'].includes(candidateProduct) ||
       candidateProduct.includes('zapote');
     const likelyOpenTopDisplay =
-      ['frontal', 'front', 'diagonal', 'top', 'superior'].some((term) =>
-        view.includes(term),
-      ) &&
-      explicitCount <= 1 &&
       visibleColumns >= 4 &&
       visibleColumns <= 5 &&
       visibleRows >= 4 &&
@@ -2213,56 +2187,6 @@ export class AiService {
     }
 
     return Math.max(estimatedBoxes, 120);
-  }
-
-  private applyUnknownSingleCornerFruitFallback(
-    parsed: any,
-    envase: string,
-    producto: string,
-    estimatedBoxes: number,
-    palletCount: number,
-  ): number {
-    if (!envase.includes('palet') || palletCount !== 1) {
-      return estimatedBoxes;
-    }
-
-    if (!this.isSingleCornerPalletView(parsed, envase)) {
-      return estimatedBoxes;
-    }
-
-    const normalizedProduct = this.normalizeProducto(producto);
-    if (normalizedProduct.length > 0) {
-      return estimatedBoxes;
-    }
-
-    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
-    const visibleRows = this.toNumber(parsed?.filas_visibles);
-    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
-    const topBoxes = this.toNumber(parsed?.cajas_superiores);
-    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
-    const material = `${parsed?.material_caja ?? ''}`.toLowerCase();
-
-    const likelyStoneFruitCorner =
-      visibleColumns >= 4 &&
-      visibleRows >= 10 &&
-      visibleRows <= 30 &&
-      estimatedDepth <= 4 &&
-      topBoxes <= 6 &&
-      estimatedBoxes <= 160 &&
-      (boxMeasures.includes('60x40') || boxMeasures.length === 0) &&
-      (material.includes('cart') || material.length === 0);
-
-    if (!likelyStoneFruitCorner) {
-      return estimatedBoxes;
-    }
-
-    parsed.profundidad_estimada = Math.max(estimatedDepth, 4);
-    parsed.cajas_por_capa = Math.max(this.toNumber(parsed?.cajas_por_capa), 8);
-    parsed.capas_estimadas = Math.max(this.toNumber(parsed?.capas_estimadas), 23);
-    parsed.medidas_caja = '60x40 cm aprox';
-    parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
-
-    return Math.max(estimatedBoxes, 184);
   }
 
   private shouldRescueCommercialIdentity(parsed: any): boolean {
@@ -2493,13 +2417,6 @@ export class AiService {
       palletCount,
     );
     boxes = this.applyStoneFruitCornerPattern(
-      parsed,
-      envase,
-      producto,
-      boxes,
-      palletCount,
-    );
-    boxes = this.applyUnknownSingleCornerFruitFallback(
       parsed,
       envase,
       producto,
@@ -4434,7 +4351,6 @@ Rules:
         '- Distingue bien melocoton, paraguayo y nectarina.',
         '- Intenta identificar tambien melon, sandia, granada, kiwi o zapote si aparecen.',
         '- Usa la forma visible del fruto y cualquier texto visible en la caja como pista de producto.',
-        '- No confundas la marca o nombre comercial de la caja con la fruta real.',
         '- Todavia no calcules cajas totales ni peso.',
         '- Si solo ves fruta suelta, devuelve envase "sin caja".',
       ].join('\n'),
@@ -4513,7 +4429,6 @@ Rules:
         '- No reinicies el analisis desde cero.',
         '- Si el producto se puede leer por la fruta visible o por texto en la caja, no lo dejes vacio.',
         '- Si hay melones o sandias en caja abierta, intenta estimar piezas_por_caja.',
-        '- No confundas la marca de la caja con la fruta real.',
         '- Si la fruta esta suelta, pon cajas_estimadas y piezas_por_caja a 0 y cuenta solo las piezas visibles.',
         '- Si hay palets, manten la coherencia con la estructura contada.',
         '- Si la estructura contada sugiere un total comercial de cajas, el peso debe quedarse cerca de esa estructura y no dispararse por encima o por debajo.',
