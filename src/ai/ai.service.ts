@@ -1603,12 +1603,31 @@ export class AiService {
       return normalized;
     }
 
-    const envase = this.normalizeEnvase(parsed?.envase);
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
     const material = `${parsed?.material_caja ?? ''}`.toLowerCase();
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const topBoxes = this.toNumber(parsed?.cajas_superiores);
     const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const envase = this.normalizeEnvase(parsed?.envase);
+
+    const likelyStoneFruitCorner =
+      envase.includes('palet') &&
+      ['corner', 'diagonal', 'lateral', 'side', 'front', 'frontal'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleColumns >= 4 &&
+      visibleRows >= 10 &&
+      visibleRows <= 30 &&
+      topBoxes <= 6 &&
+      estimatedDepth <= 4 &&
+      (boxMeasures.includes('60x40') || boxMeasures.length === 0) &&
+      (material.includes('cart') || material.length === 0);
+
+    if (likelyStoneFruitCorner) {
+      return 'melocoton';
+    }
 
     const likelyOpenTopLargeFruit =
       envase.includes('palet') &&
@@ -2303,12 +2322,11 @@ export class AiService {
       this.toNumber(parsed?.cajas_estimadas),
       this.toNumber(parsed?.cajas_aprox),
     );
-    const pieces = this.toNumber(parsed?.piezas_por_caja);
 
     return (
       envase.includes('palet') &&
       boxes > 0 &&
-      (producto.length === 0 || pieces <= 0)
+      producto.length === 0
     );
   }
 
@@ -2346,10 +2364,13 @@ export class AiService {
       140,
     );
 
+    const currentProduct = this.pickFirstNonEmptyString(parsed?.producto, parsed?.fruta);
+
     return {
       ...parsed,
       categoria: this.pickFirstNonEmptyString(rescue?.categoria, parsed?.categoria) || null,
-      producto: this.pickFirstNonEmptyString(rescue?.producto, parsed?.producto, parsed?.fruta) || null,
+      producto:
+        this.pickFirstNonEmptyString(currentProduct, rescue?.producto) || null,
       material_caja:
         this.pickFirstNonEmptyString(rescue?.material_caja, parsed?.material_caja) || null,
       piezas_por_caja: Math.max(
@@ -3992,6 +4013,16 @@ Rules:
     return 'single';
   }
 
+  private resolvePipelineFromPalletCount(count: number): 'single' | 'two' | 'multi' {
+    if (count >= 3) {
+      return 'multi';
+    }
+    if (count === 2) {
+      return 'two';
+    }
+    return 'single';
+  }
+
   private async runSceneAwareFruitVisionAnalysis(
     imageUrl: string,
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
@@ -4004,11 +4035,19 @@ Rules:
       'OpenAI staged vision step 1',
       220,
     );
-    const preliminaryPalletCountStage = await this.requestPalletCountStage(
-      imageUrl,
-      stage1,
-      'multi',
-    );
+    const stage1View = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+    const shouldPrecountScenePallets =
+      requestedScanMode === 'multi' ||
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        stage1View.includes(term),
+      );
+    const preliminaryPalletCountStage = shouldPrecountScenePallets
+      ? await this.requestPalletCountStage(
+          imageUrl,
+          stage1,
+          'multi',
+        )
+      : null;
     const pipeline = this.inferScenePipeline(
       stage1,
       requestedScanMode,
@@ -4064,6 +4103,40 @@ Rules:
       stage1,
       'single',
     );
+    const countedPallets = Math.max(
+      this.toNumber(palletCountStage?.numero_palets),
+      this.toNumber(palletCountStage?.bases_independientes_visibles),
+      this.toNumber(palletCountStage?.bloques_palets_visibles),
+    );
+    const redirectedPipeline = this.resolvePipelineFromPalletCount(countedPallets);
+    if (redirectedPipeline === 'two') {
+      return this.runTwoPalletVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+        {
+          ...stage1,
+          numero_palets_visibles_base: Math.max(
+            this.toNumber(stage1?.numero_palets_visibles_base),
+            2,
+          ),
+        },
+      );
+    }
+    if (redirectedPipeline === 'multi') {
+      return this.runMultiPalletVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+        {
+          ...stage1,
+          numero_palets_visibles_base: Math.max(
+            this.toNumber(stage1?.numero_palets_visibles_base),
+            countedPallets,
+          ),
+        },
+      );
+    }
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
