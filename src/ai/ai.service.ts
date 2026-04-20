@@ -1597,6 +1597,37 @@ export class AiService {
     return 0;
   }
 
+  private inferCommercialProductFallback(parsed: any, producto: string): string {
+    const normalized = this.normalizeProducto(producto);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+
+    const envase = this.normalizeEnvase(parsed?.envase);
+    const material = `${parsed?.material_caja ?? ''}`.toLowerCase();
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+
+    const likelyOpenTopLargeFruit =
+      envase.includes('palet') &&
+      visibleColumns >= 4 &&
+      visibleColumns <= 5 &&
+      visibleRows >= 4 &&
+      visibleRows <= 6 &&
+      topBoxes >= 4 &&
+      topBoxes <= 5 &&
+      estimatedDepth <= 3 &&
+      (material.includes('cart') || material.length === 0);
+
+    if (likelyOpenTopLargeFruit) {
+      return 'melon';
+    }
+
+    return '';
+  }
+
   private inferTarePerBoxKg(parsed: any): number {
     const material = `${parsed.material_caja ?? ''}`.toLowerCase();
 
@@ -2449,7 +2480,7 @@ export class AiService {
       envase = 'palet con cajas';
       parsed.envase = 'palet con cajas';
     }
-    const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
+    let producto = this.normalizeProducto(parsed.producto || parsed.fruta);
     const looseTerms = ['sin caja', 'suelto', 'suelta', 'loose', 'a granel'];
     const hasStructuredPackagingHints =
       this.toNumber(parsed?.numero_palets) > 0 ||
@@ -2484,7 +2515,7 @@ export class AiService {
 
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
-    const palletCount = this.inferPalletCount(parsed, envase);
+    let palletCount = this.inferPalletCount(parsed, envase);
     boxes = this.applySingleCornerBoxCorrection(parsed, envase, boxes, palletCount);
     boxes = this.applySingleCornerCommercialPattern(
       parsed,
@@ -2561,6 +2592,10 @@ export class AiService {
         parsed.medidas_caja = '60x40 cm aprox';
         parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
       }
+    }
+    producto = this.inferCommercialProductFallback(parsed, producto);
+    if (producto) {
+      parsed.producto = producto;
     }
     const boxWeightKg = this.inferBoxWeightKg(parsed, producto);
     const tarePerBoxKg = this.inferTarePerBoxKg(parsed);
@@ -3924,17 +3959,23 @@ Rules:
   private inferScenePipeline(
     stage1: any,
     requestedScanMode: 'single' | 'multi',
+    preliminaryPalletCountStage?: any,
   ): 'single' | 'two' | 'multi' {
     if (requestedScanMode === 'multi') {
       return 'multi';
     }
 
     const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
-    const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
+    const basePallets = Math.max(
+      this.toNumber(stage1?.numero_palets_visibles_base),
+      this.toNumber(preliminaryPalletCountStage?.numero_palets),
+      this.toNumber(preliminaryPalletCountStage?.bases_independientes_visibles),
+      this.toNumber(preliminaryPalletCountStage?.bloques_palets_visibles),
+    );
     const warehouseLike = ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
       view.includes(term),
     );
-    if (warehouseLike || basePallets >= 3) {
+    if ((warehouseLike && basePallets >= 2) || basePallets >= 3) {
       return 'multi';
     }
 
@@ -3963,13 +4004,25 @@ Rules:
       'OpenAI staged vision step 1',
       220,
     );
-    const pipeline = this.inferScenePipeline(stage1, requestedScanMode);
+    const preliminaryPalletCountStage = await this.requestPalletCountStage(
+      imageUrl,
+      stage1,
+      'multi',
+    );
+    const pipeline = this.inferScenePipeline(
+      stage1,
+      requestedScanMode,
+      preliminaryPalletCountStage,
+    );
     this.logVisionSnapshot('OpenAI staged vision selected pipeline', {
       requestedScanMode,
       inferredPipeline: pipeline,
       vista: stage1?.vista,
       numero_palets_visibles_base: this.toNumber(
         stage1?.numero_palets_visibles_base,
+      ),
+      preliminary_pallet_count: this.toNumber(
+        preliminaryPalletCountStage?.numero_palets,
       ),
     });
 
