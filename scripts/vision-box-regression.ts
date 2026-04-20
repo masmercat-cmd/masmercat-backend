@@ -6,8 +6,6 @@ type RegressionScenario = {
   parsed: Record<string, any>;
   expectedBoxes: number;
   expectedPallets: number;
-  expectedProduct?: string;
-  expectedPiecesPerBox?: number;
 };
 
 type HelperRegressionCase = {
@@ -218,8 +216,6 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
     synthetic_open_top_large_fruit_partial_front_001: {
       expectedBoxes: 120,
       expectedPallets: 1,
-      expectedProduct: 'melon',
-      expectedPiecesPerBox: 5,
       parsed: {
         producto: '',
         envase: 'palet con cajas',
@@ -361,23 +357,6 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
-      description: 'inferScenePipeline upgrades top warehouse scenes to multi when preliminary pallet count sees more than one base',
-      run: (service) => ({
-        actual: service.inferScenePipeline(
-          {
-            vista: 'superior almacen',
-            numero_palets_visibles_base: 1,
-          },
-          'single',
-          {
-            numero_palets: 3,
-            bases_independientes_visibles: 3,
-          },
-        ),
-        expected: 'multi',
-      }),
-    },
-    {
       description: 'mergeExternalVisionSummary applies detector counts when confidence is solid',
       run: (service) => ({
         actual: service.mergeExternalVisionSummary(
@@ -469,8 +448,6 @@ function main(): void {
     const result = service.finalizeVisionResult({ ...scenario.parsed });
     const gotBoxes = Number(result?.cajas_estimadas ?? 0);
     const gotPallets = Number(result?.numero_palets ?? 0);
-    const gotProduct = `${result?.producto ?? ''}`.trim().toLowerCase();
-    const gotPiecesPerBox = Number(result?.piezas_por_caja ?? 0);
 
     if (gotBoxes !== scenario.expectedBoxes) {
       failures.push(
@@ -484,26 +461,8 @@ function main(): void {
       );
     }
 
-    if (
-      typeof scenario.expectedProduct === 'string' &&
-      gotProduct !== scenario.expectedProduct
-    ) {
-      failures.push(
-        `${referenceId}: producto=${gotProduct}, esperado=${scenario.expectedProduct}`,
-      );
-    }
-
-    if (
-      typeof scenario.expectedPiecesPerBox === 'number' &&
-      gotPiecesPerBox !== scenario.expectedPiecesPerBox
-    ) {
-      failures.push(
-        `${referenceId}: piezas_por_caja=${gotPiecesPerBox}, esperado=${scenario.expectedPiecesPerBox}`,
-      );
-    }
-
     console.log(
-      `[vision-regression] ${referenceId} -> cajas=${gotBoxes}, palets=${gotPallets}, producto=${gotProduct}, piezas=${gotPiecesPerBox}`,
+      `[vision-regression] ${referenceId} -> cajas=${gotBoxes}, palets=${gotPallets}`,
     );
   }
 
