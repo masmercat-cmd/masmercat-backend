@@ -224,8 +224,9 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
       expectedProduct: 'manzana',
       expectedTotalPiecesMin: 1,
       parsed: {
-        producto: 'manzanas',
+        producto: 'nectarina',
         envase: 'palot',
+        texto_visible: 'PRECALIBRADO STORY 80+',
         vista: 'frontal',
         peso_bruto_kg: 320,
         tara_kg: 40,

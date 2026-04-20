@@ -114,6 +114,17 @@ export class AiService {
       apple: 'manzana',
       apples: 'manzana',
       manzanas: 'manzana',
+      story: 'manzana',
+      gala: 'manzana',
+      fuji: 'manzana',
+      golden: 'manzana',
+      'golden delicious': 'manzana',
+      granny: 'manzana',
+      'granny smith': 'manzana',
+      'pink lady': 'manzana',
+      pinklady: 'manzana',
+      reineta: 'manzana',
+      starking: 'manzana',
       melon: 'melon',
       melones: 'melon',
       watermelon: 'sandia',
@@ -151,6 +162,22 @@ export class AiService {
       return 'manzana';
     }
 
+    if (
+      [
+        'story',
+        'gala',
+        'fuji',
+        'golden',
+        'granny',
+        'pink lady',
+        'pinklady',
+        'reineta',
+        'starking',
+      ].some((term) => normalized.includes(term))
+    ) {
+      return 'manzana';
+    }
+
     if (normalized.includes('melon')) {
       return 'melon';
     }
@@ -164,6 +191,59 @@ export class AiService {
     }
 
     return normalized;
+  }
+
+  private inferProductoFromPackagingClues(
+    parsed: any,
+    producto: string,
+    envase: string,
+  ): string {
+    const explicitTextFields = [
+      parsed?.texto_visible,
+      parsed?.visible_text,
+      parsed?.ocr_text,
+      parsed?.label_text,
+      parsed?.etiqueta_visible,
+      parsed?.marcas_visibles,
+      parsed?.marca_visible,
+      parsed?.variedad_visible,
+      parsed?.texto,
+      parsed?.label,
+      parsed?.marca,
+      parsed?.variedad,
+    ]
+      .map((value) => `${value ?? ''}`.trim().toLowerCase())
+      .filter((value) => value.length > 0);
+
+    const explicitText = explicitTextFields.join(' | ');
+    const inferredFromText = this.normalizeProducto(explicitText);
+    if (inferredFromText) {
+      return inferredFromText;
+    }
+
+    const combinedText = [
+      explicitText,
+      `${parsed?.producto ?? ''}`.trim().toLowerCase(),
+      `${parsed?.fruta ?? ''}`.trim().toLowerCase(),
+    ]
+      .filter((value) => value.length > 0)
+      .join(' | ');
+    const combinedInference = this.normalizeProducto(combinedText);
+    if (combinedInference) {
+      return combinedInference;
+    }
+
+    if (
+      envase.includes('palot') &&
+      ['nectarina', 'melocoton', 'paraguayo'].includes(producto) &&
+      ['story', 'gala', 'fuji', 'golden', 'granny', 'pink lady', 'starking'].some(
+        (term) => explicitText.includes(term),
+      )
+    ) {
+      return 'manzana';
+    }
+
+    return producto;
   }
 
   private resolveVisionPromptLanguage(
@@ -1790,7 +1870,8 @@ export class AiService {
       envase = 'palet con cajas';
       parsed.envase = 'palet con cajas';
     }
-    const producto = this.normalizeProducto(parsed.producto || parsed.fruta);
+    let producto = this.normalizeProducto(parsed.producto || parsed.fruta);
+    producto = this.inferProductoFromPackagingClues(parsed, producto, envase);
     if (producto) {
       parsed.producto = producto;
     }
@@ -1829,6 +1910,9 @@ export class AiService {
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
     const palletCount = this.inferPalletCount(parsed, envase);
+    if (isPalot) {
+      boxes = 0;
+    }
     boxes = this.applySingleCornerBoxCorrection(parsed, envase, boxes, palletCount);
     boxes = this.applySingleCornerCommercialPattern(
       parsed,
@@ -3600,6 +3684,7 @@ Rules:
         '  "producto": "peach/flat peach/nectarine/kiwi/eggplant/truffle/etc",',
         '  "envase": "without box/box/multiple boxes/pallet with boxes/palox",',
         '  "material_caja": "cardboard/wood/plastic/unknown",',
+        '  "texto_visible": "short readable label text or variety when visible",',
         '  "vista": "closeup/front/side/top/diagonal/warehouse",',
         '  "hay_palet": true,',
         '  "hay_cajas": true,',
@@ -3614,6 +3699,9 @@ Rules:
         '- Distinguish peach, flat peach and nectarine carefully.',
         '- Do not estimate total boxes or weight yet.',
         '- If the image shows loose fruit only, set envase to "without box".',
+        '- If the image shows an open wooden palox filled with loose fruit, set envase to "palox", not "pallet with boxes".',
+        '- If a readable label shows apple varieties such as Story, Gala, Fuji, Golden, Granny or Pink Lady, set producto to "apple".',
+        '- Copy a short readable label into texto_visible when it is legible.',
       ].join('\n'),
       stage2: [
         'Analyze this fruit or vegetable image.',
@@ -3713,6 +3801,7 @@ Rules:
         '  "producto": "melocoton/paraguayo/nectarina/kiwi/berenjena/trufa/etc",',
         '  "envase": "sin caja/caja/varias cajas/palet con cajas/palot",',
         '  "material_caja": "carton/madera/plastico/desconocido",',
+        '  "texto_visible": "texto corto legible de etiqueta o variedad si se ve",',
         '  "vista": "detalle/frontal/lateral/superior/diagonal/almacen",',
         '  "hay_palet": true,',
         '  "hay_cajas": true,',
@@ -3727,6 +3816,9 @@ Rules:
         '- Distingue bien melocoton, paraguayo y nectarina.',
         '- Todavia no calcules cajas totales ni peso.',
         '- Si solo ves fruta suelta, devuelve envase "sin caja".',
+        '- Si ves un palot abierto de madera lleno de fruta suelta, devuelve envase "palot", no "palet con cajas".',
+        '- Si lees variedades de manzana como Story, Gala, Fuji, Golden, Granny o Pink Lady, devuelve producto "manzana".',
+        '- Copia en texto_visible el texto corto de la etiqueta cuando se lea con claridad.',
       ].join('\n'),
       stage2: [
         'Analiza esta imagen de frutas o verduras.',
