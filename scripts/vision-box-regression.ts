@@ -120,6 +120,7 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
     synthetic_top_visible_single_pallet_001: {
       expectedBoxes: 120,
       expectedPallets: 1,
+      expectedTotalPiecesMin: 600,
       parsed: {
         producto: 'zapote',
         envase: 'palet con cajas',
@@ -131,7 +132,7 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         profundidad_estimada: 1,
         cajas_por_capa: 5,
         capas_estimadas: 8,
-        cajas_superiores: 5,
+        cajas_superiores: 0,
         cajas_estimadas: 40,
         cajas_aprox: 40,
         numero_palets: 1,

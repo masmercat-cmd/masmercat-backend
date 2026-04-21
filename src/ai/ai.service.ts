@@ -1072,6 +1072,7 @@ export class AiService {
       pimiento: 14,
       tomate: 20,
       uva: 10,
+      zapote: 5,
     };
 
     const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
@@ -1308,7 +1309,11 @@ export class AiService {
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
-    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const topBoxes = Math.max(
+      this.toNumber(parsed?.cajas_superiores),
+      this.toNumber(parsed?.cajas_por_capa),
+      estimatedDepth <= 1 ? visibleColumns : 0,
+    );
     const explicitCount = Math.max(
       this.toNumber(parsed?.numero_palets),
       this.toNumber(parsed?.pallet_count),
@@ -3082,6 +3087,17 @@ Rules:
     stage2: any,
     stage3: any,
   ): boolean {
+    const mergedSingle = {
+      ...stage1,
+      ...stage2,
+      ...stage3,
+      envase: stage3?.envase ?? stage1?.envase,
+      vista: stage1?.vista ?? stage3?.vista,
+    };
+    if (this.isSingleTopVisiblePalletView(mergedSingle, this.normalizeEnvase(mergedSingle.envase))) {
+      return false;
+    }
+
     const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
     const palletCount = Math.max(
       this.toNumber(stage3?.numero_palets),
