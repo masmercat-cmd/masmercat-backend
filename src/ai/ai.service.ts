@@ -1760,6 +1760,59 @@ export class AiService {
     return Math.max(estimatedBoxes, correctedBoxes);
   }
 
+  private applySingleFrontCommercialFloor(
+    parsed: any,
+    envase: string,
+    producto: string,
+    estimatedBoxes: number,
+    palletCount: number,
+  ): number {
+    if (!envase.includes('palet') || palletCount !== 1) {
+      return estimatedBoxes;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    if (!['frontal', 'front'].some((term) => view.includes(term))) {
+      return estimatedBoxes;
+    }
+
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const estimatedDepth = this.toNumber(parsed?.profundidad_estimada);
+    const boxesPerLayer = this.toNumber(parsed?.cajas_por_capa);
+    const topBoxes = Math.max(
+      this.toNumber(parsed?.cajas_superiores),
+      boxesPerLayer,
+    );
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      `${parsed?.medidas_palet ?? ''}`.toLowerCase().includes('120x100') ||
+      boxMeasures.includes('60x40') ||
+      boxesPerLayer >= 8;
+    const likelyZapoteFrontPallet =
+      likelyIndustrial &&
+      ['zapote', 'melon'].includes(producto) &&
+      visibleColumns >= 4 &&
+      visibleColumns <= 5 &&
+      visibleRows >= 5 &&
+      visibleRows <= 8 &&
+      estimatedDepth <= 2 &&
+      topBoxes >= 8 &&
+      estimatedBoxes <= 60;
+
+    if (!likelyZapoteFrontPallet) {
+      return estimatedBoxes;
+    }
+
+    parsed.medidas_caja = '60x40 cm aprox';
+    parsed.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+    parsed.profundidad_estimada = Math.max(estimatedDepth, 3);
+    parsed.cajas_por_capa = Math.max(boxesPerLayer, 15);
+    parsed.capas_estimadas = Math.max(this.toNumber(parsed?.capas_estimadas), 8);
+
+    return Math.max(estimatedBoxes, 120);
+  }
+
   private inferPalletCount(parsed: any, envase: string): number {
     if (!envase.includes('palet') && !envase.includes('palot')) {
       return 0;
@@ -1949,6 +2002,13 @@ export class AiService {
     boxes = this.applySingleTopVisiblePalletCorrection(
       parsed,
       envase,
+      boxes,
+      palletCount,
+    );
+    boxes = this.applySingleFrontCommercialFloor(
+      parsed,
+      envase,
+      producto,
       boxes,
       palletCount,
     );
