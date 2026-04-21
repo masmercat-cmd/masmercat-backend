@@ -3390,6 +3390,7 @@ Rules:
 
   private inferScenePipeline(
     stage1: any,
+    palletCountStage: any,
     requestedScanMode: 'single' | 'multi',
   ): 'single' | 'two' | 'multi' {
     if (requestedScanMode === 'multi') {
@@ -3398,20 +3399,25 @@ Rules:
 
     const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
     const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
+    const countedPallets = Math.max(
+      this.toNumber(palletCountStage?.numero_palets),
+      this.toNumber(palletCountStage?.bases_independientes_visibles),
+      this.toNumber(palletCountStage?.bloques_palets_visibles),
+      this.toNumber(palletCountStage?.columnas_palets_visibles) *
+        this.toNumber(palletCountStage?.filas_palets_visibles),
+    );
     const warehouseLike = ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
       view.includes(term),
     );
-    if (warehouseLike || basePallets >= 3) {
+    if (warehouseLike || basePallets >= 3 || countedPallets >= 3) {
       return 'multi';
     }
 
-    if (basePallets === 2) {
+    if (Math.max(basePallets, countedPallets) === 2) {
       return 'two';
     }
 
-    if (
-      basePallets >= 2
-    ) {
+    if (Math.max(basePallets, countedPallets) >= 2) {
       return 'multi';
     }
 
@@ -3430,13 +3436,29 @@ Rules:
       'OpenAI staged vision step 1',
       220,
     );
-    const pipeline = this.inferScenePipeline(stage1, requestedScanMode);
+    const precomputedPalletCountStage =
+      this.normalizeEnvase(stage1?.envase).includes('palet') ||
+      this.normalizeEnvase(stage1?.envase).includes('palot')
+        ? await this.requestPalletCountStage(imageUrl, stage1, 'multi')
+        : {};
+    const pipeline = this.inferScenePipeline(
+      stage1,
+      precomputedPalletCountStage,
+      requestedScanMode,
+    );
     this.logVisionSnapshot('OpenAI staged vision selected pipeline', {
       requestedScanMode,
       inferredPipeline: pipeline,
       vista: stage1?.vista,
       numero_palets_visibles_base: this.toNumber(
         stage1?.numero_palets_visibles_base,
+      ),
+      pre_pipeline_pallets: Math.max(
+        this.toNumber(precomputedPalletCountStage?.numero_palets),
+        this.toNumber(precomputedPalletCountStage?.bases_independientes_visibles),
+        this.toNumber(precomputedPalletCountStage?.bloques_palets_visibles),
+        this.toNumber(precomputedPalletCountStage?.columnas_palets_visibles) *
+          this.toNumber(precomputedPalletCountStage?.filas_palets_visibles),
       ),
     });
 
@@ -3446,6 +3468,7 @@ Rules:
         language,
         requestedScanMode,
         stage1,
+        precomputedPalletCountStage,
       );
     }
 
@@ -3455,6 +3478,7 @@ Rules:
         language,
         requestedScanMode,
         stage1,
+        precomputedPalletCountStage,
       );
     }
 
@@ -3463,6 +3487,7 @@ Rules:
       language,
       requestedScanMode,
       stage1,
+      precomputedPalletCountStage,
     );
   }
 
@@ -3471,13 +3496,13 @@ Rules:
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     requestedScanMode: 'single' | 'multi',
     stage1: any,
+    precomputedPalletCountStage: any = null,
   ): Promise<any> {
     const prompts = this.buildStagedVisionPrompts(language, 'single');
-    const palletCountStage = await this.requestPalletCountStage(
-      imageUrl,
-      stage1,
-      'single',
-    );
+    const palletCountStage =
+      precomputedPalletCountStage && Object.keys(precomputedPalletCountStage).length > 0
+        ? precomputedPalletCountStage
+        : await this.requestPalletCountStage(imageUrl, stage1, 'single');
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
@@ -3551,13 +3576,13 @@ Rules:
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     requestedScanMode: 'single' | 'multi',
     stage1: any,
+    precomputedPalletCountStage: any = null,
   ): Promise<any> {
     const prompts = this.buildStagedVisionPrompts(language, 'multi');
-    const palletCountStage = await this.requestPalletCountStage(
-      imageUrl,
-      stage1,
-      'two',
-    );
+    const palletCountStage =
+      precomputedPalletCountStage && Object.keys(precomputedPalletCountStage).length > 0
+        ? precomputedPalletCountStage
+        : await this.requestPalletCountStage(imageUrl, stage1, 'two');
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +
@@ -3599,13 +3624,13 @@ Rules:
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     requestedScanMode: 'single' | 'multi',
     stage1: any,
+    precomputedPalletCountStage: any = null,
   ): Promise<any> {
     const prompts = this.buildStagedVisionPrompts(language, 'multi');
-    const palletCountStage = await this.requestPalletCountStage(
-      imageUrl,
-      stage1,
-      'multi',
-    );
+    const palletCountStage =
+      precomputedPalletCountStage && Object.keys(precomputedPalletCountStage).length > 0
+        ? precomputedPalletCountStage
+        : await this.requestPalletCountStage(imageUrl, stage1, 'multi');
     const stage2 = await this.requestVisionJson(
       imageUrl,
       prompts.stage2 +

@@ -324,6 +324,25 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'inferScenePipeline upgrades ambiguous frontal warehouse scans to multi from pallet pre-count',
+      run: (service) => ({
+        actual: service.inferScenePipeline(
+          {
+            vista: 'frontal',
+            numero_palets_visibles_base: 1,
+          },
+          {
+            numero_palets: 24,
+            bloques_palets_visibles: 12,
+            columnas_palets_visibles: 6,
+            filas_palets_visibles: 4,
+          },
+          'single',
+        ),
+        expected: 'multi',
+      }),
+    },
+    {
       description: 'isSingleTopVisiblePalletView recognizes elevated single pallet fronts',
       run: (service) => ({
         actual: service.isSingleTopVisiblePalletView(
