@@ -1426,6 +1426,38 @@ export class AiService {
     return hasPalletHints && (strongStackedGrid || strongTopFace);
   }
 
+  private shouldForceWarehousePalletPackaging(parsed: any): boolean {
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const envase = this.normalizeEnvase(parsed?.envase);
+    const palletGridCount =
+      Math.max(1, this.toNumber(parsed?.columnas_palets_visibles)) *
+      Math.max(1, this.toNumber(parsed?.filas_palets_visibles));
+    const explicitPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bases_independientes_visibles),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      palletGridCount,
+    );
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const warehouseLike =
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      ) || this.isWarehouseStyleView(parsed, envase || 'palet con cajas', totalBoxes);
+
+    return (
+      warehouseLike &&
+      (explicitPallets >= 4 ||
+        palletGridCount >= 4 ||
+        (visibleRows <= 3 && topBoxes >= 8))
+    );
+  }
+
   private applySingleCornerBoxCorrection(
     parsed: any,
     envase: string,
@@ -1924,7 +1956,10 @@ export class AiService {
 
   private finalizeVisionResult(parsed: any): any {
     let envase = this.normalizeEnvase(parsed.envase);
-    if (this.shouldForcePalletWithBoxes(parsed)) {
+    if (
+      this.shouldForcePalletWithBoxes(parsed) ||
+      this.shouldForceWarehousePalletPackaging(parsed)
+    ) {
       envase = 'palet con cajas';
       parsed.envase = 'palet con cajas';
     }
@@ -3718,11 +3753,19 @@ Rules:
 
     const merged = {
       ...stage1,
+      ...palletCountStage,
       ...stage2,
       ...stage3,
       categoria: stage3?.categoria ?? stage1?.categoria,
       producto: stage3?.producto ?? stage1?.producto ?? stage3?.fruta,
-      envase: stage3?.envase ?? stage1?.envase,
+      envase:
+        this.toNumber(palletCountStage?.numero_palets) >= 4 ||
+        this.toNumber(palletCountStage?.bases_independientes_visibles) >= 4 ||
+        this.toNumber(palletCountStage?.bloques_palets_visibles) >= 4 ||
+        this.toNumber(palletCountStage?.columnas_palets_visibles) *
+            this.toNumber(palletCountStage?.filas_palets_visibles) >= 4
+          ? 'palet con cajas'
+          : stage3?.envase ?? stage1?.envase,
       material_caja: stage3?.material_caja ?? stage1?.material_caja,
       numero_palets:
         this.toNumber(stage3?.numero_palets) ||
@@ -3730,6 +3773,25 @@ Rules:
         this.toNumber(palletCountStage?.bases_independientes_visibles) ||
         this.toNumber(stage2?.numero_palets) ||
         this.toNumber(stage1?.numero_palets_visibles_base),
+      numero_palets_visibles_base: Math.max(
+        this.toNumber(stage1?.numero_palets_visibles_base),
+        this.toNumber(palletCountStage?.bases_independientes_visibles),
+      ),
+      bases_independientes_visibles: this.toNumber(
+        palletCountStage?.bases_independientes_visibles,
+      ),
+      bloques_palets_visibles: Math.max(
+        this.toNumber(stage2?.bloques_palets_visibles),
+        this.toNumber(palletCountStage?.bloques_palets_visibles),
+      ),
+      columnas_palets_visibles: Math.max(
+        this.toNumber(stage2?.columnas_palets_visibles),
+        this.toNumber(palletCountStage?.columnas_palets_visibles),
+      ),
+      filas_palets_visibles: Math.max(
+        this.toNumber(stage2?.filas_palets_visibles),
+        this.toNumber(palletCountStage?.filas_palets_visibles),
+      ),
       cajas_estimadas:
         this.toNumber(stage3?.cajas_estimadas) ||
         this.toNumber(stage2?.cajas_estimadas),

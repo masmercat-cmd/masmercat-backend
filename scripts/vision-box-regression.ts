@@ -261,6 +261,24 @@ function buildScenarios(validated: Record<string, Record<string, string>>): Reco
         numero_palets: 1,
       },
     },
+    synthetic_warehouse_top_misread_loose_001: {
+      expectedBoxes: 240,
+      expectedPallets: 24,
+      parsed: {
+        producto: '',
+        envase: 'sin caja',
+        vista: 'superior',
+        numero_palets: 24,
+        bases_independientes_visibles: 12,
+        bloques_palets_visibles: 12,
+        columnas_palets_visibles: 6,
+        filas_palets_visibles: 4,
+        cajas_estimadas: 0,
+        cajas_aprox: 0,
+        filas_visibles: 2,
+        cajas_superiores: 10,
+      },
+    },
   };
 }
 
