@@ -2423,6 +2423,10 @@ Reglas:
   }
 
   private shouldRunZoneRecount(parsed: any): boolean {
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi') {
+      return true;
+    }
+
     const envase = this.normalizeEnvase(parsed?.envase);
     const totalBoxes = Math.max(
       this.toNumber(parsed?.cajas_estimadas),

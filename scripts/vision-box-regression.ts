@@ -399,6 +399,22 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'shouldRunZoneRecount always runs for explicit multi scan mode',
+      run: (service) => ({
+        actual: service.shouldRunZoneRecount({
+          envase: 'sin caja',
+          vista: 'frontal',
+          scene_pipeline: 'single',
+          scan_mode: 'multi',
+          filas_visibles: 10,
+          cajas_superiores: 0,
+          cajas_estimadas: 0,
+          cajas_aprox: 0,
+        }),
+        expected: true,
+      }),
+    },
+    {
       description: 'shouldRunZoneRecount works even when envase was misread in a warehouse view',
       run: (service) => ({
         actual: service.shouldRunZoneRecount({
