@@ -381,6 +381,24 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'shouldRunZoneRecount works even when envase was misread in a warehouse view',
+      run: (service) => ({
+        actual: service.shouldRunZoneRecount({
+          envase: 'sin caja',
+          vista: 'superior',
+          scene_pipeline: 'single',
+          scan_mode: 'single',
+          filas_visibles: 2,
+          columnas_visibles: 3,
+          cajas_superiores: 10,
+          cajas_estimadas: 40,
+          cajas_aprox: 40,
+          numero_palets: 1,
+        }),
+        expected: true,
+      }),
+    },
+    {
       description: 'isSingleTopVisiblePalletView recognizes elevated single pallet fronts',
       run: (service) => ({
         actual: service.isSingleTopVisiblePalletView(

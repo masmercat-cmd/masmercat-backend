@@ -2389,10 +2389,6 @@ Reglas:
 
   private shouldRunZoneRecount(parsed: any): boolean {
     const envase = this.normalizeEnvase(parsed?.envase);
-    if (!envase.includes('palet')) {
-      return false;
-    }
-
     const totalBoxes = Math.max(
       this.toNumber(parsed?.cajas_estimadas),
       this.toNumber(parsed?.cajas_aprox),
@@ -2408,15 +2404,30 @@ Reglas:
     );
     const pipeline = `${parsed?.scene_pipeline ?? ''}`.trim().toLowerCase();
     const requestedMode = `${parsed?.scan_mode ?? ''}`.trim().toLowerCase();
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const warehouseLikeView =
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      ) || this.isWarehouseStyleView(parsed, envase || 'palet con cajas', totalBoxes);
+    const hasPalletHints =
+      envase.includes('palet') ||
+      this.toNumber(parsed?.numero_palets) > 0 ||
+      this.toNumber(parsed?.pallet_count) > 0 ||
+      this.toNumber(parsed?.bloques_palets_visibles) > 0 ||
+      this.toNumber(parsed?.columnas_palets_visibles) *
+          this.toNumber(parsed?.filas_palets_visibles) > 0;
     const likelySinglePipelineWarehouseMiss =
       pipeline === 'single' &&
-      envase.includes('palet') &&
       requestedMode !== 'multi' &&
-      (topBoxes >= 8 || visibleRows <= 3 || explicitPallets >= 4);
+      ((warehouseLikeView && (topBoxes >= 8 || visibleRows <= 3 || explicitPallets >= 1)) ||
+        (visibleRows <= 3 && topBoxes >= 8));
 
     return (
+      (hasPalletHints &&
       (totalBoxes >= 90 &&
-        (topBoxes >= 12 || visibleRows <= 3 || explicitPallets >= 4)) ||
+        (topBoxes >= 12 || visibleRows <= 3 || explicitPallets >= 4))) ||
+      (warehouseLikeView &&
+        (topBoxes >= 8 || visibleRows <= 3 || explicitPallets >= 1)) ||
       likelySinglePipelineWarehouseMiss
     );
   }
@@ -2505,6 +2516,14 @@ ${JSON.stringify(parsed)}`;
     return {
       ...parsed,
       ...zoned,
+      envase:
+        zonedTotal >= 2
+          ? 'palet con cajas'
+          : parsed.envase,
+      scene_pipeline:
+        zonedTotal >= 2
+          ? 'multi'
+          : parsed.scene_pipeline,
       numero_palets: Math.max(this.toNumber(parsed.numero_palets), zonedTotal),
       bloques_palets_visibles: Math.max(
         this.toNumber(parsed.bloques_palets_visibles),
