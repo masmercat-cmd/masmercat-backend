@@ -363,6 +363,24 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'shouldRunZoneRecount rescues warehouse-like scenes even when pipeline stayed single',
+      run: (service) => ({
+        actual: service.shouldRunZoneRecount({
+          envase: 'palet con cajas',
+          scene_pipeline: 'single',
+          scan_mode: 'single',
+          filas_visibles: 2,
+          cajas_superiores: 10,
+          cajas_estimadas: 40,
+          cajas_aprox: 40,
+          bloques_palets_visibles: 1,
+          columnas_palets_visibles: 1,
+          filas_palets_visibles: 1,
+        }),
+        expected: true,
+      }),
+    },
+    {
       description: 'isSingleTopVisiblePalletView recognizes elevated single pallet fronts',
       run: (service) => ({
         actual: service.isSingleTopVisiblePalletView(

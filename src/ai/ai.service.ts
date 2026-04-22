@@ -2393,10 +2393,6 @@ Reglas:
       return false;
     }
 
-    if (`${parsed?.scene_pipeline ?? ''}`.trim().toLowerCase() === 'single') {
-      return false;
-    }
-
     const totalBoxes = Math.max(
       this.toNumber(parsed?.cajas_estimadas),
       this.toNumber(parsed?.cajas_aprox),
@@ -2410,10 +2406,18 @@ Reglas:
       this.toNumber(parsed?.columnas_palets_visibles) *
           this.toNumber(parsed?.filas_palets_visibles),
     );
+    const pipeline = `${parsed?.scene_pipeline ?? ''}`.trim().toLowerCase();
+    const requestedMode = `${parsed?.scan_mode ?? ''}`.trim().toLowerCase();
+    const likelySinglePipelineWarehouseMiss =
+      pipeline === 'single' &&
+      envase.includes('palet') &&
+      requestedMode !== 'multi' &&
+      (topBoxes >= 8 || visibleRows <= 3 || explicitPallets >= 4);
 
     return (
-      totalBoxes >= 90 &&
-      (topBoxes >= 12 || visibleRows <= 3 || explicitPallets >= 4)
+      (totalBoxes >= 90 &&
+        (topBoxes >= 12 || visibleRows <= 3 || explicitPallets >= 4)) ||
+      likelySinglePipelineWarehouseMiss
     );
   }
 
