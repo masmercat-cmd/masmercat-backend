@@ -3436,11 +3436,11 @@ Rules:
       'OpenAI staged vision step 1',
       220,
     );
-    const precomputedPalletCountStage =
-      this.normalizeEnvase(stage1?.envase).includes('palet') ||
-      this.normalizeEnvase(stage1?.envase).includes('palot')
-        ? await this.requestPalletCountStage(imageUrl, stage1, 'multi')
-        : {};
+    const precomputedPalletCountStage = await this.requestPalletCountStage(
+      imageUrl,
+      stage1,
+      'multi',
+    );
     const pipeline = this.inferScenePipeline(
       stage1,
       precomputedPalletCountStage,

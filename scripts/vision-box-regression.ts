@@ -343,6 +343,26 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'inferScenePipeline upgrades scans to multi even when stage1 underreports bases',
+      run: (service) => ({
+        actual: service.inferScenePipeline(
+          {
+            vista: 'frontal',
+            envase: 'sin caja',
+            numero_palets_visibles_base: 0,
+          },
+          {
+            numero_palets: 24,
+            bloques_palets_visibles: 12,
+            columnas_palets_visibles: 6,
+            filas_palets_visibles: 4,
+          },
+          'single',
+        ),
+        expected: 'multi',
+      }),
+    },
+    {
       description: 'isSingleTopVisiblePalletView recognizes elevated single pallet fronts',
       run: (service) => ({
         actual: service.isSingleTopVisiblePalletView(
