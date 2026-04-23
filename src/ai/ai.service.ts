@@ -3599,6 +3599,14 @@ Rules:
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     requestedScanMode: 'single' | 'multi',
   ): Promise<any> {
+    if (requestedScanMode === 'multi') {
+      return this.runExplicitMultiWarehouseVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+      );
+    }
+
     const prompts = this.buildStagedVisionPrompts(language, requestedScanMode);
     const stage1 = await this.requestVisionJson(
       imageUrl,
@@ -3658,6 +3666,116 @@ Rules:
       requestedScanMode,
       stage1,
       precomputedPalletCountStage,
+    );
+  }
+
+  private async runExplicitMultiWarehouseVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+  ): Promise<any> {
+    const prompts = this.buildStagedVisionPrompts(language, 'multi');
+    const rawStage1 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage1 +
+        '\n\nExplicit multi-pallet warehouse pipeline.' +
+        '\nThe user selected multiple pallets.' +
+        '\nTreat repeated tall rectangular stacks on the floor as pallet blocks, not as loose fruit.' +
+        '\nDo not return loose fruit or a single piece unless there is truly no visible palletized structure.',
+      'OpenAI explicit multi warehouse step 1',
+      220,
+    );
+
+    const seededStage1 = {
+      ...rawStage1,
+      envase: 'palet con cajas',
+      vista:
+        ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+          `${rawStage1?.vista ?? ''}`.trim().toLowerCase().includes(term),
+        )
+          ? rawStage1?.vista
+          : 'almacen',
+      hay_palet: true,
+      hay_cajas: true,
+      scan_mode: 'multi',
+      scene_pipeline: 'multi',
+    };
+
+    const palletCountStage = await this.requestPalletCountStage(
+      imageUrl,
+      seededStage1,
+      'multi',
+    );
+    const zonedStage = await this.zoneRecountPallets(imageUrl, {
+      ...seededStage1,
+      ...palletCountStage,
+      envase: 'palet con cajas',
+      vista: seededStage1?.vista ?? 'almacen',
+      hay_palet: true,
+      hay_cajas: true,
+      scan_mode: 'multi',
+      scene_pipeline: 'multi',
+    });
+
+    const warehouseSeed = {
+      ...seededStage1,
+      ...palletCountStage,
+      ...zonedStage,
+      envase: 'palet con cajas',
+      vista: `${zonedStage?.vista ?? seededStage1?.vista ?? 'almacen'}` || 'almacen',
+      hay_palet: true,
+      hay_cajas: true,
+      scan_mode: 'multi',
+      scene_pipeline: 'multi',
+      numero_palets: Math.max(
+        this.toNumber(rawStage1?.numero_palets),
+        this.toNumber(rawStage1?.numero_palets_visibles_base),
+        this.toNumber(palletCountStage?.numero_palets),
+        this.toNumber(palletCountStage?.bases_independientes_visibles),
+        this.toNumber(palletCountStage?.bloques_palets_visibles),
+        this.toNumber(palletCountStage?.columnas_palets_visibles) *
+          this.toNumber(palletCountStage?.filas_palets_visibles),
+        this.toNumber(zonedStage?.numero_palets),
+        this.toNumber(zonedStage?.bloques_palets_visibles),
+        this.toNumber(zonedStage?.columnas_palets_visibles) *
+          this.toNumber(zonedStage?.filas_palets_visibles),
+      ),
+    };
+
+    const stage2 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage2 +
+        '\n\nDedicated warehouse multi-pallet pipeline.' +
+        '\nPrioritize counting full pallet footprints, repeated pallet stacks, and warehouse lanes.' +
+        '\nNever collapse the scene to one pallet if multiple repeated blocks are visible.' +
+        '\nDo not classify the scene as loose fruit.' +
+        '\n\nLectura base de almacén:\n' +
+        JSON.stringify(warehouseSeed),
+      'OpenAI explicit multi warehouse step 2',
+      210,
+    );
+    const stage3 = await this.requestVisionJson(
+      imageUrl,
+      prompts.stage3 +
+        '\n\nDedicated warehouse multi-pallet pipeline.' +
+        '\nPreserve the total warehouse grid from the seeded recount.' +
+        '\nDo not reduce repeated pallet lanes to a single dominant stack.' +
+        '\nDo not return loose fruit when pallet blocks are visible.' +
+        '\n\nLectura base de almacén:\n' +
+        JSON.stringify(warehouseSeed) +
+        '\n\nLectura estructural del paso 2:\n' +
+        JSON.stringify(stage2),
+      'OpenAI explicit multi warehouse step 3',
+      220,
+    );
+
+    return this.mergeStagedVisionResult(
+      warehouseSeed,
+      stage2,
+      stage3,
+      warehouseSeed,
+      requestedScanMode,
+      'multi',
     );
   }
 
