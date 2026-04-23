@@ -472,6 +472,26 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'applyEmergencyWarehouseFallback restores explicit multi scans even with partial box data',
+      run: (service) => ({
+        actual: service.applyEmergencyWarehouseFallback(
+          {
+            envase: 'palet con cajas',
+            vista: 'superior',
+            scene_pipeline: 'multi',
+            scan_mode: 'multi',
+            numero_palets: 1,
+            pallet_count: 1,
+            cajas_estimadas: 40,
+            cajas_aprox: 40,
+            cantidad_total_piezas: 200,
+          },
+          'multi',
+        ).numero_palets,
+        expected: 24,
+      }),
+    },
+    {
       description: 'shouldRunZoneRecount works even when envase was misread in a warehouse view',
       run: (service) => ({
         actual: service.shouldRunZoneRecount({

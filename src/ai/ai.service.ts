@@ -2606,14 +2606,13 @@ ${JSON.stringify(parsed)}`;
       this.toNumber(parsed?.columnas_palets_visibles) *
         this.toNumber(parsed?.filas_palets_visibles),
     );
+    const collapsedExplicitMultiScan =
+      requestedScanMode === 'multi' && palletSignals <= 1;
     const degenerateLooseWarehouseMiss =
-      requestedScanMode === 'multi' &&
-      palletSignals <= 1 &&
-      boxes <= 0 &&
-      pieces <= 1 &&
-      (envase.includes('sin caja') || !envase || `${parsed?.scene_pipeline ?? ''}`.includes('multi'));
+      collapsedExplicitMultiScan &&
+      (boxes <= 0 || pieces <= 1 || envase.includes('sin caja') || !envase);
 
-    if (!degenerateLooseWarehouseMiss) {
+    if (!collapsedExplicitMultiScan && !degenerateLooseWarehouseMiss) {
       return parsed;
     }
 
