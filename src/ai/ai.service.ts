@@ -2606,13 +2606,28 @@ ${JSON.stringify(parsed)}`;
       this.toNumber(parsed?.columnas_palets_visibles) *
         this.toNumber(parsed?.filas_palets_visibles),
     );
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const warehouseView =
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      );
     const collapsedExplicitMultiScan =
       requestedScanMode === 'multi' && palletSignals <= 1;
+    const collapsedLooseWarehouseScan =
+      warehouseView &&
+      palletSignals <= 1 &&
+      boxes <= 0 &&
+      pieces <= 1 &&
+      (envase.includes('sin caja') || !envase);
     const degenerateLooseWarehouseMiss =
-      collapsedExplicitMultiScan &&
+      (collapsedExplicitMultiScan || collapsedLooseWarehouseScan) &&
       (boxes <= 0 || pieces <= 1 || envase.includes('sin caja') || !envase);
 
-    if (!collapsedExplicitMultiScan && !degenerateLooseWarehouseMiss) {
+    if (
+      !collapsedExplicitMultiScan &&
+      !collapsedLooseWarehouseScan &&
+      !degenerateLooseWarehouseMiss
+    ) {
       return parsed;
     }
 
