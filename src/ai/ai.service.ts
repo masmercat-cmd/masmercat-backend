@@ -2616,6 +2616,51 @@ ${JSON.stringify(parsed)}`;
     return recovered;
   }
 
+  private async enforceSeededWarehouseRecovery(
+    img: string,
+    parsed: any,
+    requestedScanMode: 'single' | 'multi',
+    fastMode?: boolean,
+  ): Promise<any> {
+    if (requestedScanMode !== 'multi' || fastMode === true) {
+      return parsed;
+    }
+
+    const seeded = await this.zoneRecountPallets(img, {
+      ...parsed,
+      envase: 'palet con cajas',
+      vista: 'almacen',
+      scan_mode: 'multi',
+      scene_pipeline: 'multi',
+      hay_palet: true,
+      hay_cajas: true,
+    });
+    const seededPallets = Math.max(
+      this.toNumber(seeded?.numero_palets),
+      this.toNumber(seeded?.pallet_count),
+      this.toNumber(seeded?.bloques_palets_visibles),
+      this.toNumber(seeded?.columnas_palets_visibles) *
+        this.toNumber(seeded?.filas_palets_visibles),
+    );
+
+    if (seededPallets >= 2) {
+      seeded.envase = 'palet con cajas';
+      seeded.scene_pipeline = 'multi';
+      seeded.scan_mode = 'multi';
+      seeded.numero_palets = Math.max(
+        this.toNumber(seeded?.numero_palets),
+        seededPallets,
+      );
+      seeded.pallet_count = Math.max(
+        this.toNumber(seeded?.pallet_count),
+        seededPallets,
+      );
+      return seeded;
+    }
+
+    return parsed;
+  }
+
   async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
     const imageHash =
       `${payload?.image_hash ?? payload?.imageHash ?? payload?.resultado_ai?.image_hash ?? payload?.result?.image_hash ?? ''}`.trim() ||
@@ -3093,6 +3138,12 @@ Rules:
         lang,
         requestedScanMode,
       );
+      parsed = await this.enforceSeededWarehouseRecovery(
+        img,
+        parsed,
+        requestedScanMode,
+        options?.fastMode,
+      );
       parsed = await this.enforceExplicitMultiPalletRecovery(
         img,
         parsed,
@@ -3128,6 +3179,12 @@ Rules:
         img,
         lang,
         requestedScanMode,
+      );
+      parsed = await this.enforceSeededWarehouseRecovery(
+        img,
+        parsed,
+        requestedScanMode,
+        options?.fastMode,
       );
       parsed = await this.enforceExplicitMultiPalletRecovery(
         img,
