@@ -2584,11 +2584,22 @@ ${JSON.stringify(parsed)}`;
     parsed: any,
     requestedScanMode: 'single' | 'multi',
   ): boolean {
-    if (requestedScanMode !== 'multi') {
+    const envase = this.normalizeEnvase(parsed?.envase);
+    const pieces = Math.max(
+      this.toNumber(parsed?.cantidad_total_piezas),
+      this.toNumber(parsed?.cantidad_aprox),
+      this.toNumber(parsed?.piezas_visibles),
+    );
+    const degenerateLooseResult =
+      envase.includes('sin caja') &&
+      pieces <= 1 &&
+      this.toNumber(parsed?.cajas_estimadas) <= 0 &&
+      this.toNumber(parsed?.cajas_aprox) <= 0;
+
+    if (requestedScanMode !== 'multi' && !degenerateLooseResult) {
       return false;
     }
 
-    const envase = this.normalizeEnvase(parsed?.envase);
     const palletSignals = Math.max(
       this.toNumber(parsed?.numero_palets),
       this.toNumber(parsed?.pallet_count),
@@ -2608,6 +2619,7 @@ ${JSON.stringify(parsed)}`;
     return (
       palletSignals <= 1 ||
       envase.includes('sin caja') ||
+      degenerateLooseResult ||
       (looksWarehouse && palletSignals <= 2)
     );
   }
@@ -2695,7 +2707,7 @@ ${JSON.stringify(parsed)}`;
     requestedScanMode: 'single' | 'multi',
     fastMode?: boolean,
   ): Promise<any> {
-    if (requestedScanMode !== 'multi' || fastMode === true) {
+    if (requestedScanMode !== 'multi') {
       return parsed;
     }
 
@@ -2731,7 +2743,7 @@ ${JSON.stringify(parsed)}`;
     requestedScanMode: 'single' | 'multi',
     fastMode?: boolean,
   ): Promise<any> {
-    if (requestedScanMode !== 'multi' || fastMode === true) {
+    if (requestedScanMode !== 'multi') {
       return parsed;
     }
 
@@ -3265,12 +3277,19 @@ Rules:
       if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
         parsed = await this.refinePalletEstimate(img, parsed, lang);
       }
-      if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
+      if (
+        (requestedScanMode === 'multi' || !(options?.fastMode == true)) &&
+        this.shouldRunZoneRecount(parsed)
+      ) {
         parsed = await this.zoneRecountPallets(img, parsed);
       }
+      const needsWarehouseRescueA =
+        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode);
       if (
-        !(options?.fastMode == true) &&
-        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode)
+        needsWarehouseRescueA &&
+        (requestedScanMode === 'multi' ||
+          !(options?.fastMode == true) ||
+          this.normalizeEnvase(parsed?.envase).includes('sin caja'))
       ) {
         parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
       }
@@ -3313,12 +3332,19 @@ Rules:
       if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
         parsed = await this.refinePalletEstimate(img, parsed, lang);
       }
-      if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
+      if (
+        (requestedScanMode === 'multi' || !(options?.fastMode == true)) &&
+        this.shouldRunZoneRecount(parsed)
+      ) {
         parsed = await this.zoneRecountPallets(img, parsed);
       }
+      const needsWarehouseRescueB =
+        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode);
       if (
-        !(options?.fastMode == true) &&
-        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode)
+        needsWarehouseRescueB &&
+        (requestedScanMode === 'multi' ||
+          !(options?.fastMode == true) ||
+          this.normalizeEnvase(parsed?.envase).includes('sin caja'))
       ) {
         parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
       }

@@ -436,6 +436,24 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'shouldRunExplicitMultiWarehouseRescue also protects degenerate loose results if scan mode is lost',
+      run: (service) => ({
+        actual: service.shouldRunExplicitMultiWarehouseRescue(
+          {
+            envase: 'sin caja',
+            vista: 'superior',
+            scene_pipeline: 'single',
+            numero_palets: 1,
+            cajas_estimadas: 0,
+            cajas_aprox: 0,
+            cantidad_total_piezas: 1,
+          },
+          'single',
+        ),
+        expected: true,
+      }),
+    },
+    {
       description: 'shouldRunZoneRecount works even when envase was misread in a warehouse view',
       run: (service) => ({
         actual: service.shouldRunZoneRecount({
