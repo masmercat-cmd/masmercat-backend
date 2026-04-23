@@ -415,6 +415,27 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'shouldRunExplicitMultiWarehouseRescue flags explicit multi scans that still look like loose fruit',
+      run: (service) => ({
+        actual: service.shouldRunExplicitMultiWarehouseRescue(
+          {
+            envase: 'sin caja',
+            vista: 'superior',
+            scan_mode: 'multi',
+            scene_pipeline: 'multi',
+            numero_palets: 1,
+            bloques_palets_visibles: 1,
+            columnas_palets_visibles: 1,
+            filas_palets_visibles: 1,
+            cajas_superiores: 10,
+            filas_visibles: 2,
+          },
+          'multi',
+        ),
+        expected: true,
+      }),
+    },
+    {
       description: 'shouldRunZoneRecount works even when envase was misread in a warehouse view',
       run: (service) => ({
         actual: service.shouldRunZoneRecount({

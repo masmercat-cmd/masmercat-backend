@@ -2580,6 +2580,115 @@ ${JSON.stringify(parsed)}`;
     };
   }
 
+  private shouldRunExplicitMultiWarehouseRescue(
+    parsed: any,
+    requestedScanMode: 'single' | 'multi',
+  ): boolean {
+    if (requestedScanMode !== 'multi') {
+      return false;
+    }
+
+    const envase = this.normalizeEnvase(parsed?.envase);
+    const palletSignals = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bases_independientes_visibles),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const looksWarehouse =
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      ) || topBoxes >= 8 || visibleRows <= 3;
+
+    return (
+      palletSignals <= 1 ||
+      envase.includes('sin caja') ||
+      (looksWarehouse && palletSignals <= 2)
+    );
+  }
+
+  private async rescueExplicitMultiWarehouseCount(
+    img: string,
+    parsed: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      `data:image/jpeg;base64,${img}`,
+      [
+        'Analyze this warehouse fruit image.',
+        '',
+        'Emergency recount for an explicit multi-pallet scan.',
+        'The user selected multiple pallets.',
+        'Count the total number of distinct pallet stacks or pallet footprints across the whole image.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "envase": "palet con cajas/palot",',
+        '  "vista": "warehouse/top/front",',
+        '  "numero_palets": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "confianza_estimacion": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- This is NOT a single-pallet recount.',
+        '- This is NOT loose fruit unless there is truly no palletized structure.',
+        '- Repeated tall rectangular stacks on the floor count as separate pallets.',
+        '- Green fruit tops visible from above still belong to palletized stacks when repeated in a grid.',
+        '- Count the whole warehouse grid, not only the nearest or dominant stack.',
+        '- If the image clearly shows repeated pallet lanes, do not answer 1.',
+        '',
+        'Current parsed context:',
+        JSON.stringify(parsed),
+      ].join('\n'),
+      'OpenAI explicit multi warehouse rescue',
+      180,
+    );
+
+    const rescuedPallets = Math.max(
+      this.toNumber(rescue?.numero_palets),
+      this.toNumber(rescue?.bloques_palets_visibles),
+      this.toNumber(rescue?.columnas_palets_visibles) *
+        this.toNumber(rescue?.filas_palets_visibles),
+    );
+
+    if (rescuedPallets < 2) {
+      return parsed;
+    }
+
+    return {
+      ...parsed,
+      ...rescue,
+      envase: rescue?.envase ? this.normalizeEnvase(rescue.envase) : 'palet con cajas',
+      vista: rescue?.vista ?? parsed?.vista ?? 'almacen',
+      scene_pipeline: 'multi',
+      scan_mode: 'multi',
+      hay_palet: true,
+      hay_cajas: true,
+      numero_palets: Math.max(this.toNumber(parsed?.numero_palets), rescuedPallets),
+      pallet_count: Math.max(this.toNumber(parsed?.pallet_count), rescuedPallets),
+      bloques_palets_visibles: Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        this.toNumber(rescue?.bloques_palets_visibles),
+        rescuedPallets,
+      ),
+      columnas_palets_visibles: Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        this.toNumber(rescue?.columnas_palets_visibles),
+      ),
+      filas_palets_visibles: Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        this.toNumber(rescue?.filas_palets_visibles),
+      ),
+    };
+  }
+
   private async enforceExplicitMultiPalletRecovery(
     img: string,
     parsed: any,
@@ -3159,6 +3268,12 @@ Rules:
       if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
         parsed = await this.zoneRecountPallets(img, parsed);
       }
+      if (
+        !(options?.fastMode == true) &&
+        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode)
+      ) {
+        parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
+      }
 
       const finalized = this.finalizeVisionResult(parsed);
 
@@ -3200,6 +3315,12 @@ Rules:
       }
       if (!(options?.fastMode == true) && this.shouldRunZoneRecount(parsed)) {
         parsed = await this.zoneRecountPallets(img, parsed);
+      }
+      if (
+        !(options?.fastMode == true) &&
+        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode)
+      ) {
+        parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
       }
 
       const finalized = this.finalizeVisionResult(parsed);
