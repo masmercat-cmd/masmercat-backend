@@ -454,6 +454,24 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'applyEmergencyWarehouseFallback restores explicit multi scans that collapse to one loose piece',
+      run: (service) => ({
+        actual: service.applyEmergencyWarehouseFallback(
+          {
+            envase: 'sin caja',
+            vista: 'superior',
+            scene_pipeline: 'multi',
+            numero_palets: 1,
+            cajas_estimadas: 0,
+            cajas_aprox: 0,
+            cantidad_total_piezas: 1,
+          },
+          'multi',
+        ).numero_palets,
+        expected: 24,
+      }),
+    },
+    {
       description: 'shouldRunZoneRecount works even when envase was misread in a warehouse view',
       run: (service) => ({
         actual: service.shouldRunZoneRecount({
