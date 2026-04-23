@@ -2580,6 +2580,42 @@ ${JSON.stringify(parsed)}`;
     };
   }
 
+  private async enforceExplicitMultiPalletRecovery(
+    img: string,
+    parsed: any,
+    requestedScanMode: 'single' | 'multi',
+    fastMode?: boolean,
+  ): Promise<any> {
+    if (requestedScanMode !== 'multi' || fastMode === true) {
+      return parsed;
+    }
+
+    let recovered = await this.zoneRecountPallets(img, parsed);
+    const recoveredPallets = Math.max(
+      this.toNumber(recovered?.numero_palets),
+      this.toNumber(recovered?.pallet_count),
+      this.toNumber(recovered?.bloques_palets_visibles),
+      this.toNumber(recovered?.columnas_palets_visibles) *
+        this.toNumber(recovered?.filas_palets_visibles),
+    );
+
+    if (recoveredPallets >= 2) {
+      recovered.envase = 'palet con cajas';
+      recovered.scene_pipeline = 'multi';
+      recovered.scan_mode = 'multi';
+      recovered.numero_palets = Math.max(
+        this.toNumber(recovered?.numero_palets),
+        recoveredPallets,
+      );
+      recovered.pallet_count = Math.max(
+        this.toNumber(recovered?.pallet_count),
+        recoveredPallets,
+      );
+    }
+
+    return recovered;
+  }
+
   async saveScanResult(userId: string, payload: any): Promise<AiScanResult> {
     const imageHash =
       `${payload?.image_hash ?? payload?.imageHash ?? payload?.resultado_ai?.image_hash ?? payload?.result?.image_hash ?? ''}`.trim() ||
@@ -3057,6 +3093,12 @@ Rules:
         lang,
         requestedScanMode,
       );
+      parsed = await this.enforceExplicitMultiPalletRecovery(
+        img,
+        parsed,
+        requestedScanMode,
+        options?.fastMode,
+      );
       console.timeEnd('openai_attempt_A');
       console.log('OpenAI responded (attempt A)');
 
@@ -3086,6 +3128,12 @@ Rules:
         img,
         lang,
         requestedScanMode,
+      );
+      parsed = await this.enforceExplicitMultiPalletRecovery(
+        img,
+        parsed,
+        requestedScanMode,
+        options?.fastMode,
       );
       console.timeEnd('openai_attempt_B');
       console.log('OpenAI responded (attempt B)');
