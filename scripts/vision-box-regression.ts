@@ -454,25 +454,7 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
-      description: 'applyEmergencyWarehouseFallback restores explicit multi scans that collapse to one loose piece',
-      run: (service) => ({
-        actual: service.applyEmergencyWarehouseFallback(
-          {
-            envase: 'sin caja',
-            vista: 'superior',
-            scene_pipeline: 'multi',
-            numero_palets: 1,
-            cajas_estimadas: 0,
-            cajas_aprox: 0,
-            cantidad_total_piezas: 1,
-          },
-          'multi',
-        ).numero_palets,
-        expected: 24,
-      }),
-    },
-    {
-      description: 'applyEmergencyWarehouseFallback restores explicit multi scans even with partial box data',
+      description: 'applyEmergencyWarehouseFallback does not invent a 24-pallet count from one collapsed pallet',
       run: (service) => ({
         actual: service.applyEmergencyWarehouseFallback(
           {
@@ -488,26 +470,25 @@ function buildHelperCases(): HelperRegressionCase[] {
           },
           'multi',
         ).numero_palets,
-        expected: 24,
+        expected: 1,
       }),
     },
     {
-      description: 'applyEmergencyWarehouseFallback restores top warehouse scans even if scan mode is lost',
+      description: 'applyEmergencyWarehouseFallback scales boxes by detected pallet count',
       run: (service) => ({
         actual: service.applyEmergencyWarehouseFallback(
           {
-            envase: 'sin caja',
+            envase: 'palet con cajas',
             vista: 'superior',
-            scene_pipeline: 'single',
-            numero_palets: 1,
-            pallet_count: 1,
-            cajas_estimadas: 0,
-            cajas_aprox: 0,
-            cantidad_total_piezas: 1,
+            scene_pipeline: 'multi',
+            numero_palets: 5,
+            pallet_count: 5,
+            cajas_estimadas: 55,
+            cajas_aprox: 55,
           },
-          'single',
-        ).numero_palets,
-        expected: 24,
+          'multi',
+        ).cajas_estimadas,
+        expected: 275,
       }),
     },
     {

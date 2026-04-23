@@ -2611,25 +2611,14 @@ ${JSON.stringify(parsed)}`;
       ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
         view.includes(term),
       );
-    const collapsedExplicitMultiScan =
-      requestedScanMode === 'multi' && palletSignals <= 1;
-    const collapsedLooseWarehouseScan =
-      warehouseView &&
-      palletSignals <= 1 &&
-      boxes <= 0 &&
-      pieces <= 1 &&
-      (envase.includes('sin caja') || !envase);
-    const degenerateLooseWarehouseMiss =
-      (collapsedExplicitMultiScan || collapsedLooseWarehouseScan) &&
-      (boxes <= 0 || pieces <= 1 || envase.includes('sin caja') || !envase);
-
-    if (
-      !collapsedExplicitMultiScan &&
-      !collapsedLooseWarehouseScan &&
-      !degenerateLooseWarehouseMiss
-    ) {
+    if (palletSignals <= 1) {
       return parsed;
     }
+
+    const boxesPerPallet =
+      boxes > 0 && boxes <= 90 ? boxes : 55;
+    const totalBoxes =
+      boxes > 90 ? boxes : boxesPerPallet * palletSignals;
 
     return {
       ...parsed,
@@ -2637,26 +2626,18 @@ ${JSON.stringify(parsed)}`;
       vista: parsed?.vista ?? 'almacen',
       scene_pipeline: 'multi',
       scan_mode: 'multi',
-      warehouse_emergency_fallback: true,
       hay_palet: true,
       hay_cajas: true,
-      numero_palets: 24,
-      pallet_count: 24,
+      numero_palets: palletSignals,
+      pallet_count: palletSignals,
       bloques_palets_visibles: Math.max(
         this.toNumber(parsed?.bloques_palets_visibles),
-        24,
-      ),
-      columnas_palets_visibles: Math.max(
-        this.toNumber(parsed?.columnas_palets_visibles),
-        6,
-      ),
-      filas_palets_visibles: Math.max(
-        this.toNumber(parsed?.filas_palets_visibles),
-        4,
+        palletSignals,
       ),
       cajas_superiores: Math.max(this.toNumber(parsed?.cajas_superiores), 10),
-      cajas_estimadas: Math.max(boxes, 240),
-      cajas_aprox: Math.max(boxes, 240),
+      cajas_por_palet: boxesPerPallet,
+      cajas_estimadas: totalBoxes,
+      cajas_aprox: totalBoxes,
     };
   }
 
