@@ -474,7 +474,7 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
-      description: 'applyEmergencyWarehouseFallback scales boxes by detected pallet count',
+      description: 'applyEmergencyWarehouseFallback preserves detected pallet results without scaling defaults',
       run: (service) => ({
         actual: service.applyEmergencyWarehouseFallback(
           {
@@ -488,7 +488,7 @@ function buildHelperCases(): HelperRegressionCase[] {
           },
           'multi',
         ).cajas_estimadas,
-        expected: 275,
+        expected: 55,
       }),
     },
     {

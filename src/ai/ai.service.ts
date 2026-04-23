@@ -2588,57 +2588,8 @@ ${JSON.stringify(parsed)}`;
     parsed: any,
     requestedScanMode: 'single' | 'multi',
   ): any {
-    const envase = this.normalizeEnvase(parsed?.envase);
-    const pieces = Math.max(
-      this.toNumber(parsed?.cantidad_total_piezas),
-      this.toNumber(parsed?.cantidad_aprox),
-      this.toNumber(parsed?.piezas_visibles),
-    );
-    const boxes = Math.max(
-      this.toNumber(parsed?.cajas_estimadas),
-      this.toNumber(parsed?.cajas_aprox),
-    );
-    const palletSignals = Math.max(
-      this.toNumber(parsed?.numero_palets),
-      this.toNumber(parsed?.pallet_count),
-      this.toNumber(parsed?.bases_independientes_visibles),
-      this.toNumber(parsed?.bloques_palets_visibles),
-      this.toNumber(parsed?.columnas_palets_visibles) *
-        this.toNumber(parsed?.filas_palets_visibles),
-    );
-    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
-    const warehouseView =
-      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
-        view.includes(term),
-      );
-    if (palletSignals <= 1) {
-      return parsed;
-    }
-
-    const boxesPerPallet =
-      boxes > 0 && boxes <= 90 ? boxes : 55;
-    const totalBoxes =
-      boxes > 90 ? boxes : boxesPerPallet * palletSignals;
-
-    return {
-      ...parsed,
-      envase: 'palet con cajas',
-      vista: parsed?.vista ?? 'almacen',
-      scene_pipeline: 'multi',
-      scan_mode: 'multi',
-      hay_palet: true,
-      hay_cajas: true,
-      numero_palets: palletSignals,
-      pallet_count: palletSignals,
-      bloques_palets_visibles: Math.max(
-        this.toNumber(parsed?.bloques_palets_visibles),
-        palletSignals,
-      ),
-      cajas_superiores: Math.max(this.toNumber(parsed?.cajas_superiores), 10),
-      cajas_por_palet: boxesPerPallet,
-      cajas_estimadas: totalBoxes,
-      cajas_aprox: totalBoxes,
-    };
+    void requestedScanMode;
+    return parsed;
   }
 
   private shouldRunExplicitMultiWarehouseRescue(
