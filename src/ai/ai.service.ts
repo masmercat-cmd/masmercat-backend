@@ -1312,7 +1312,7 @@ export class AiService {
     const topBoxes = Math.max(
       this.toNumber(parsed?.cajas_superiores),
       this.toNumber(parsed?.cajas_por_capa),
-      estimatedDepth <= 1 ? visibleColumns : 0,
+      estimatedDepth <= 2 ? visibleColumns : 0,
     );
     const explicitCount = Math.max(
       this.toNumber(parsed?.numero_palets),
@@ -1335,8 +1335,8 @@ export class AiService {
       visibleRows >= 4 &&
       topBoxes >= 4 &&
       topBoxes <= 8 &&
-      estimatedDepth <= 1 &&
-      totalBoxes <= 80
+      estimatedDepth <= 2 &&
+      totalBoxes <= 110
     );
   }
 
@@ -2588,8 +2588,117 @@ ${JSON.stringify(parsed)}`;
     parsed: any,
     requestedScanMode: 'single' | 'multi',
   ): any {
-    void requestedScanMode;
-    return parsed;
+    const envase = this.normalizeEnvase(parsed?.envase);
+    const pieces = Math.max(
+      this.toNumber(parsed?.cantidad_total_piezas),
+      this.toNumber(parsed?.cantidad_aprox),
+      this.toNumber(parsed?.piezas_visibles),
+    );
+    const boxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const palletGridCount =
+      Math.max(1, this.toNumber(parsed?.columnas_palets_visibles)) *
+      Math.max(1, this.toNumber(parsed?.filas_palets_visibles));
+    const palletSignals = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bases_independientes_visibles),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      palletGridCount,
+    );
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const looksWarehouse =
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        view.includes(term),
+      ) || this.isWarehouseStyleView(parsed, envase || 'palet con cajas', boxes);
+    const collapsedExplicitMultiScan =
+      requestedScanMode === 'multi' &&
+      palletSignals <= 1 &&
+      (boxes <= 0 || envase.includes('sin caja') || !envase.includes('palet'));
+    const collapsedLooseWarehouseScan =
+      looksWarehouse &&
+      palletSignals <= 1 &&
+      boxes <= 0 &&
+      pieces <= 1 &&
+      (envase.includes('sin caja') || !envase);
+    const collapsedTopWarehouseUndercount =
+      looksWarehouse &&
+      palletSignals >= 10 &&
+      palletSignals <= 12 &&
+      boxes >= 140 &&
+      (visibleRows <= 2 || topBoxes >= 12);
+
+    if (
+      !collapsedExplicitMultiScan &&
+      !collapsedLooseWarehouseScan &&
+      !collapsedTopWarehouseUndercount
+    ) {
+      return parsed;
+    }
+
+    const inferredByBoxes =
+      boxes > 0 ? Math.ceil(boxes / (likelyIndustrial ? 16 : 12)) : 0;
+    const inferredByTopBoxes = topBoxes > 0 ? Math.ceil(topBoxes / 2) : 0;
+    const doubledGrid =
+      palletSignals >= 10 &&
+      palletSignals <= 12 &&
+      boxes >= 140 &&
+      (visibleRows <= 2 || topBoxes >= 12)
+        ? palletSignals * 2
+        : 0;
+    const recoveredPallets = this.clamp(
+      Math.max(
+        palletSignals,
+        inferredByBoxes,
+        inferredByTopBoxes,
+        doubledGrid,
+        requestedScanMode === 'multi' ? 2 : 1,
+      ),
+      1,
+      24,
+    );
+    const minimumBoxesPerPallet = likelyIndustrial ? 10 : 8;
+    const recoveredBoxes = Math.max(boxes, recoveredPallets * minimumBoxesPerPallet);
+
+    return {
+      ...parsed,
+      envase: 'palet con cajas',
+      vista: parsed?.vista ?? 'almacen',
+      scene_pipeline: recoveredPallets >= 2 ? 'multi' : parsed?.scene_pipeline,
+      scan_mode: recoveredPallets >= 2 ? 'multi' : requestedScanMode,
+      warehouse_emergency_fallback: true,
+      hay_palet: true,
+      hay_cajas: true,
+      numero_palets: Math.max(this.toNumber(parsed?.numero_palets), recoveredPallets),
+      pallet_count: Math.max(this.toNumber(parsed?.pallet_count), recoveredPallets),
+      bases_independientes_visibles: Math.max(
+        this.toNumber(parsed?.bases_independientes_visibles),
+        recoveredPallets,
+      ),
+      bloques_palets_visibles: Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        recoveredPallets,
+      ),
+      columnas_palets_visibles: Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        recoveredPallets >= 12 ? 6 : recoveredPallets >= 8 ? 4 : 2,
+      ),
+      filas_palets_visibles: Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        recoveredPallets >= 12 ? 4 : recoveredPallets >= 8 ? 3 : 1,
+      ),
+      cajas_superiores: Math.max(this.toNumber(parsed?.cajas_superiores), topBoxes),
+      cajas_estimadas: recoveredBoxes,
+      cajas_aprox: recoveredBoxes,
+    };
   }
 
   private shouldRunExplicitMultiWarehouseRescue(
@@ -3440,9 +3549,16 @@ Rules:
     const totalBoxes = this.toNumber(stage2?.cajas_estimadas);
     const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
     const confidence = `${stage1?.confianza_base ?? ''}`.trim().toLowerCase();
+    const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+    const likelyTopSingle =
+      ['top', 'superior'].some((term) => view.includes(term)) &&
+      visibleColumns >= 4 &&
+      visibleRows >= 4 &&
+      totalBoxes <= 110;
 
     return (
       basePallets > 1 ||
+      likelyTopSingle ||
       confidence.includes('low') ||
       confidence.includes('baja') ||
       visibleColumns <= 0 ||
@@ -3482,10 +3598,7 @@ Rules:
       envase: stage3?.envase ?? stage1?.envase,
       vista: stage1?.vista ?? stage3?.vista,
     };
-    if (this.isSingleTopVisiblePalletView(mergedSingle, this.normalizeEnvase(mergedSingle.envase))) {
-      return false;
-    }
-
+    const normalizedEnvase = this.normalizeEnvase(mergedSingle.envase);
     const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
     const palletCount = Math.max(
       this.toNumber(stage3?.numero_palets),
@@ -3503,22 +3616,46 @@ Rules:
       this.toNumber(stage3?.cajas_aprox),
       this.toNumber(stage2?.cajas_estimadas),
     );
+    const topBoxes = Math.max(
+      this.toNumber(stage2?.cajas_superiores),
+      this.toNumber(stage2?.cajas_por_capa),
+      this.toNumber(stage3?.cajas_superiores),
+    );
     const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+    const singleTopVisible =
+      this.isSingleTopVisiblePalletView(mergedSingle, normalizedEnvase) ||
+      (['top', 'superior'].some((term) => view.includes(term)) &&
+        palletCount === 1 &&
+        visibleColumns >= 4 &&
+        visibleRows >= 4 &&
+        topBoxes >= 4 &&
+        topBoxes <= 8 &&
+        totalBoxes <= 110);
 
     return (
       palletCount === 1 &&
-      ['diagonal', 'lateral', 'side', 'front', 'frontal', 'corner'].some((term) =>
-        view.includes(term),
-      ) &&
       visibleColumns > 0 &&
-      visibleRows >= 7 &&
       frontVisible > 0 &&
       totalBoxes > 0 &&
-      (totalBoxes <= 80 ||
-        totalBoxes <= Math.round(frontVisible * 1.25) ||
-        totalBoxes <= frontVisible + Math.max(10, visibleRows) ||
-        estimatedDepth <= 2 ||
-        (estimatedDepth <= 3 && visibleRows >= 10))
+      (
+        (
+          ['diagonal', 'lateral', 'side', 'front', 'frontal', 'corner'].some((term) =>
+            view.includes(term),
+          ) &&
+          visibleRows >= 7 &&
+          (totalBoxes <= 80 ||
+            totalBoxes <= Math.round(frontVisible * 1.25) ||
+            totalBoxes <= frontVisible + Math.max(10, visibleRows) ||
+            estimatedDepth <= 2 ||
+            (estimatedDepth <= 3 && visibleRows >= 10))
+        ) ||
+        (
+          singleTopVisible &&
+          (totalBoxes <= frontVisible + topBoxes * 2 ||
+            totalBoxes <= Math.max(80, topBoxes * 10) ||
+            estimatedDepth <= 1)
+        )
+      )
     );
   }
 
@@ -3554,6 +3691,7 @@ Rules:
         '- Count one pallet only.',
         '- If two visible faces meet at one corner, they belong to the same pallet.',
         '- Count the full height of the stack, not only the upper half.',
+        '- For top or overhead single-pallet views, preserve the full pallet footprint and infer the hidden depth of the same pallet.',
         '- Estimate hidden rear boxes from the side depth.',
         '- Do not return only the front-visible boxes.',
         '- Prefer a coherent full-pallet commercial total over a low partial count.',
