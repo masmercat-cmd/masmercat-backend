@@ -1213,6 +1213,7 @@ export class AiService {
     const visibleRows = this.toNumber(parsed.filas_visibles);
     const visibleColumns = this.toNumber(parsed.columnas_visibles);
     const topBoxes = this.toNumber(parsed.cajas_superiores);
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
     const explicitGridCount =
       Math.max(1, this.toNumber(parsed.columnas_palets_visibles)) *
       Math.max(1, this.toNumber(parsed.filas_palets_visibles));
@@ -1221,6 +1222,18 @@ export class AiService {
       this.toNumber(parsed.grupos_palets),
       explicitGridCount,
     );
+    const corridorFrontView =
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleRows >= 5 &&
+      visibleColumns >= 1 &&
+      topBoxes <= 6 &&
+      blockCount <= 4;
+
+    if (corridorFrontView) {
+      return false;
+    }
 
     return (
       (visibleRows > 0 && visibleRows <= 3 && topBoxes > 0 && totalBoxes >= 90) ||
@@ -1887,16 +1900,29 @@ export class AiService {
     const visibleRows = this.toNumber(parsed.filas_visibles);
     const visibleColumns = this.toNumber(parsed.columnas_visibles);
     const topBoxes = this.toNumber(parsed.cajas_superiores);
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
     const boxMeasures = `${parsed.medidas_caja ?? ''}`.toLowerCase();
     const palletMeasures = `${parsed.medidas_palet ?? ''}`.toLowerCase();
     const likelyIndustrial =
       palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
     const explicitOrGridCount = Math.max(explicitCount, palletGridCount);
+    const likelyFrontLimitedScene =
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleRows >= 5 &&
+      topBoxes <= 6 &&
+      explicitOrGridCount > 0 &&
+      explicitOrGridCount <= 4;
     const likelyWarehouseMultiPallet = this.isWarehouseStyleView(
       parsed,
       envase,
       totalBoxes,
     );
+
+    if (likelyFrontLimitedScene) {
+      return Math.max(1, Math.round(explicitOrGridCount));
+    }
 
     if (explicitOrGridCount > 0 && !likelyWarehouseMultiPallet) {
       return Math.max(1, Math.round(explicitOrGridCount));
