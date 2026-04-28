@@ -3912,10 +3912,6 @@ Rules:
     palletCountStage: any,
     requestedScanMode: 'single' | 'multi',
   ): 'single' | 'two' | 'multi' {
-    if (requestedScanMode === 'multi') {
-      return 'multi';
-    }
-
     const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
     const basePallets = this.toNumber(stage1?.numero_palets_visibles_base);
     const countedPallets = Math.max(
@@ -3925,9 +3921,24 @@ Rules:
       this.toNumber(palletCountStage?.columnas_palets_visibles) *
         this.toNumber(palletCountStage?.filas_palets_visibles),
     );
+    const frontLimitedMultiScene =
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      Math.max(basePallets, countedPallets) >= 2 &&
+      Math.max(basePallets, countedPallets) <= 4;
     const warehouseLike = ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
       view.includes(term),
     );
+
+    if (requestedScanMode === 'multi' && frontLimitedMultiScene) {
+      return Math.max(basePallets, countedPallets) === 2 ? 'two' : 'multi';
+    }
+
+    if (requestedScanMode === 'multi' && !warehouseLike) {
+      return Math.max(basePallets, countedPallets) === 2 ? 'two' : 'multi';
+    }
+
     if (warehouseLike || basePallets >= 3 || countedPallets >= 3) {
       return 'multi';
     }
@@ -3948,14 +3959,6 @@ Rules:
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
     requestedScanMode: 'single' | 'multi',
   ): Promise<any> {
-    if (requestedScanMode === 'multi') {
-      return this.runExplicitMultiWarehouseVisionAnalysis(
-        imageUrl,
-        language,
-        requestedScanMode,
-      );
-    }
-
     const prompts = this.buildStagedVisionPrompts(language, requestedScanMode);
     const stage1 = await this.requestVisionJson(
       imageUrl,
@@ -3973,9 +3976,23 @@ Rules:
       precomputedPalletCountStage,
       requestedScanMode,
     );
+    const explicitWarehouseLike =
+      requestedScanMode === 'multi' &&
+      ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+        `${stage1?.vista ?? ''}`.trim().toLowerCase().includes(term),
+      ) &&
+      Math.max(
+        this.toNumber(stage1?.numero_palets_visibles_base),
+        this.toNumber(precomputedPalletCountStage?.numero_palets),
+        this.toNumber(precomputedPalletCountStage?.bases_independientes_visibles),
+        this.toNumber(precomputedPalletCountStage?.bloques_palets_visibles),
+        this.toNumber(precomputedPalletCountStage?.columnas_palets_visibles) *
+          this.toNumber(precomputedPalletCountStage?.filas_palets_visibles),
+      ) >= 4;
     this.logVisionSnapshot('OpenAI staged vision selected pipeline', {
       requestedScanMode,
       inferredPipeline: pipeline,
+      explicitWarehouseLike,
       vista: stage1?.vista,
       numero_palets_visibles_base: this.toNumber(
         stage1?.numero_palets_visibles_base,
@@ -3988,6 +4005,14 @@ Rules:
           this.toNumber(precomputedPalletCountStage?.filas_palets_visibles),
       ),
     });
+
+    if (explicitWarehouseLike) {
+      return this.runExplicitMultiWarehouseVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+      );
+    }
 
     if (pipeline === 'multi') {
       return this.runMultiPalletVisionAnalysis(
