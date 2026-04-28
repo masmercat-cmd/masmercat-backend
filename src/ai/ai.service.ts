@@ -4328,6 +4328,29 @@ Rules:
     );
   }
 
+  private inferFrontLimitedVisiblePallets(
+    stage1: any,
+    stage2: any,
+    stage3: any,
+    palletCountStage: any,
+  ): number {
+    const candidates = [
+      this.toNumber(stage1?.numero_palets_visibles_base),
+      this.toNumber(palletCountStage?.bases_independientes_visibles),
+      this.toNumber(stage2?.columnas_palets_visibles) *
+        this.toNumber(stage2?.filas_palets_visibles),
+      this.toNumber(palletCountStage?.columnas_palets_visibles) *
+        this.toNumber(palletCountStage?.filas_palets_visibles),
+      this.toNumber(stage2?.bloques_palets_visibles),
+      this.toNumber(palletCountStage?.bloques_palets_visibles),
+      this.toNumber(stage2?.numero_palets),
+      this.toNumber(palletCountStage?.numero_palets),
+      this.toNumber(stage3?.numero_palets),
+    ].filter((value) => value >= 2 && value <= 4);
+
+    return candidates.length ? Math.max(...candidates) : 0;
+  }
+
   private mergeStagedVisionResult(
     stage1: any,
     stage2: any,
@@ -4351,8 +4374,23 @@ Rules:
       structuralColumns > 0 && structuralDepth > 0
         ? structuralColumns * structuralDepth
         : 0;
+    const view = `${stage1?.vista ?? stage2?.vista ?? stage3?.vista ?? ''}`
+      .trim()
+      .toLowerCase();
+    const frontLimitedScene =
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      structuralRows >= 5 &&
+      this.toNumber(stage2?.cajas_superiores) <= 6;
+    const frontVisiblePallets = this.inferFrontLimitedVisiblePallets(
+      stage1,
+      stage2,
+      stage3,
+      palletCountStage,
+    );
 
-    const merged = {
+    const merged: any = {
       ...stage1,
       ...palletCountStage,
       ...stage2,
@@ -4403,6 +4441,21 @@ Rules:
       scan_mode: requestedScanMode,
       scene_pipeline: pipeline,
     };
+
+    if (frontLimitedScene && frontVisiblePallets >= 2) {
+      merged.numero_palets = frontVisiblePallets;
+      merged.pallet_count = frontVisiblePallets;
+      merged.numero_palets_visibles_base = Math.max(
+        this.toNumber(stage1?.numero_palets_visibles_base),
+        frontVisiblePallets,
+      );
+      merged.bases_independientes_visibles = frontVisiblePallets;
+      merged.bloques_palets_visibles = frontVisiblePallets;
+      merged.columnas_palets_visibles = frontVisiblePallets;
+      merged.filas_palets_visibles = 1;
+      merged.scan_mode = requestedScanMode;
+      merged.scene_pipeline = frontVisiblePallets === 2 ? 'two' : 'multi';
+    }
 
     const stagedAuditEntry = {
       language: stage1?.language ?? null,
