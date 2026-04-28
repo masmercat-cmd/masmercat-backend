@@ -2450,6 +2450,30 @@ Reglas:
   }
 
   private shouldRunZoneRecount(parsed: any): boolean {
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const explicitPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+          this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const frontLimitedScene =
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleRows >= 5 &&
+      visibleColumns >= 1 &&
+      topBoxes <= 6 &&
+      explicitPallets <= 4;
+
+    if (frontLimitedScene) {
+      return false;
+    }
+
     if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi') {
       return true;
     }
@@ -2459,18 +2483,8 @@ Reglas:
       this.toNumber(parsed?.cajas_estimadas),
       this.toNumber(parsed?.cajas_aprox),
     );
-    const visibleRows = this.toNumber(parsed?.filas_visibles);
-    const topBoxes = this.toNumber(parsed?.cajas_superiores);
-    const explicitPallets = Math.max(
-      this.toNumber(parsed?.numero_palets),
-      this.toNumber(parsed?.pallet_count),
-      this.toNumber(parsed?.bloques_palets_visibles),
-      this.toNumber(parsed?.columnas_palets_visibles) *
-          this.toNumber(parsed?.filas_palets_visibles),
-    );
     const pipeline = `${parsed?.scene_pipeline ?? ''}`.trim().toLowerCase();
     const requestedMode = `${parsed?.scan_mode ?? ''}`.trim().toLowerCase();
-    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
     const warehouseLikeView =
       ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
         view.includes(term),
@@ -2854,7 +2868,12 @@ ${JSON.stringify(parsed)}`;
     requestedScanMode: 'single' | 'multi',
     fastMode?: boolean,
   ): Promise<any> {
+    void fastMode;
     if (requestedScanMode !== 'multi') {
+      return parsed;
+    }
+
+    if (!this.shouldRunZoneRecount(parsed)) {
       return parsed;
     }
 
@@ -2890,7 +2909,12 @@ ${JSON.stringify(parsed)}`;
     requestedScanMode: 'single' | 'multi',
     fastMode?: boolean,
   ): Promise<any> {
+    void fastMode;
     if (requestedScanMode !== 'multi') {
+      return parsed;
+    }
+
+    if (!this.shouldRunZoneRecount(parsed)) {
       return parsed;
     }
 
