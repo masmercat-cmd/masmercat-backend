@@ -2179,6 +2179,10 @@ export class AiService {
       columnas_palets_visibles: this.toNumber(parsed?.columnas_palets_visibles),
       filas_palets_visibles: this.toNumber(parsed?.filas_palets_visibles),
       warehouse_emergency_fallback: parsed?.warehouse_emergency_fallback === true,
+      debug_stage_counts:
+        parsed?.debug_stage_counts && typeof parsed.debug_stage_counts === 'object'
+          ? parsed.debug_stage_counts
+          : null,
     };
     parsed.calibre = `dbg p:${parsed.debug_vision.scene_pipeline} c:${parsed.debug_vision.columnas_visibles} r:${parsed.debug_vision.filas_visibles} d:${parsed.debug_vision.profundidad_estimada}`;
     parsed.calidad =
@@ -4507,6 +4511,29 @@ Rules:
       },
     };
     this.pushStagedVisionAudit(stagedAuditEntry);
+    merged.debug_stage_counts = {
+      stage1_base_pallets: this.toNumber(stage1?.numero_palets_visibles_base),
+      pallet_count_stage_numero_palets: this.toNumber(palletCountStage?.numero_palets),
+      pallet_count_stage_bases: this.toNumber(
+        palletCountStage?.bases_independientes_visibles,
+      ),
+      pallet_count_stage_bloques: this.toNumber(
+        palletCountStage?.bloques_palets_visibles,
+      ),
+      pallet_count_stage_grid:
+        this.toNumber(palletCountStage?.columnas_palets_visibles) *
+        this.toNumber(palletCountStage?.filas_palets_visibles),
+      stage2_numero_palets: this.toNumber(stage2?.numero_palets),
+      stage2_bloques: this.toNumber(stage2?.bloques_palets_visibles),
+      stage2_grid:
+        this.toNumber(stage2?.columnas_palets_visibles) *
+        this.toNumber(stage2?.filas_palets_visibles),
+      stage3_numero_palets: this.toNumber(stage3?.numero_palets),
+      merged_numero_palets: this.toNumber(merged?.numero_palets),
+      front_visible_pallets:
+        frontLimitedScene && frontVisiblePallets >= 2 ? frontVisiblePallets : 0,
+      front_limited_scene: frontLimitedScene,
+    };
     this.logVisionSnapshot('OpenAI staged vision audit summary', stagedAuditEntry);
     this.logVisionSnapshot('OpenAI staged vision merged JSON', merged);
     return merged;
