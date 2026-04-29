@@ -2012,7 +2012,7 @@ export class AiService {
       this.toNumber(parsed?.cajas_aprox) > 0 ||
       parsed?.hay_palet === true ||
       parsed?.hay_cajas === true;
-    const looksLoose =
+    let looksLoose =
       looseTerms.some((term) => envase.includes(term)) ||
       (envase.length > 0 &&
         !hasStructuredPackagingHints &&
@@ -2032,6 +2032,11 @@ export class AiService {
 
     parsed = this.applyPalletSceneCorrections(parsed, envase);
     parsed = this.applyFrontMultiStructuralFallback(parsed, envase);
+    if (parsed?.front_multi_structural_fallback === true) {
+      envase = 'palet con cajas';
+      parsed.envase = 'palet con cajas';
+      looksLoose = false;
+    }
 
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
@@ -3085,10 +3090,6 @@ ${JSON.stringify(parsed)}`;
 
   private applyFrontMultiStructuralFallback(parsed: any, envase: string): any {
     if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() !== 'multi') {
-      return parsed;
-    }
-
-    if (!envase.includes('palet')) {
       return parsed;
     }
 
