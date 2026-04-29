@@ -2866,6 +2866,125 @@ ${JSON.stringify(parsed)}`;
     };
   }
 
+  private shouldRunFrontMultiPalletRescue(
+    parsed: any,
+    requestedScanMode: 'single' | 'multi',
+  ): boolean {
+    if (requestedScanMode !== 'multi') {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const palletCount = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const boxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const producto = `${parsed?.producto ?? parsed?.fruta ?? ''}`.trim();
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+
+    return (
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      (palletCount <= 1 || boxes <= 0 || !producto) &&
+      visibleRows >= 4
+    );
+  }
+
+  private async rescueFrontMultiPalletCount(
+    img: string,
+    parsed: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      `data:image/jpeg;base64,${img}`,
+      [
+        'Analyze this frontal or diagonal fruit pallet image.',
+        '',
+        'Emergency recount for a small multi-pallet front view.',
+        'Count separate pallet blocks from left to right, not warehouse lanes.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "producto": "melocoton/paraguayo/nectarina/granada/manzana/kiwi/etc",',
+        '  "envase": "palet con cajas",',
+        '  "vista": "frontal/lateral/diagonal",',
+        '  "numero_palets": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "confianza_estimacion": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- This is a front-view recount, not a warehouse top-view recount.',
+        '- Count distinct pallet bases or blocks visible from left to right.',
+        '- If three stacked pallet blocks are visible side by side, return 3, not 1 and not 24.',
+        '- Keep the result limited to the few visible pallet blocks in front of the camera.',
+        '- Return the total estimated boxes across those visible pallet blocks.',
+        '',
+        'Current parsed context:',
+        JSON.stringify(parsed),
+      ].join('\n'),
+      'OpenAI front multi pallet rescue',
+      190,
+    );
+
+    const rescuedPallets = Math.max(
+      this.toNumber(rescue?.numero_palets),
+      this.toNumber(rescue?.bloques_palets_visibles),
+      this.toNumber(rescue?.columnas_palets_visibles) *
+        this.toNumber(rescue?.filas_palets_visibles),
+    );
+
+    return {
+      ...parsed,
+      ...rescue,
+      producto: rescue?.producto ?? parsed?.producto,
+      envase: rescue?.envase ? this.normalizeEnvase(rescue.envase) : parsed?.envase,
+      vista: rescue?.vista ?? parsed?.vista,
+      numero_palets: Math.max(this.toNumber(parsed?.numero_palets), rescuedPallets),
+      pallet_count: Math.max(this.toNumber(parsed?.pallet_count), rescuedPallets),
+      bloques_palets_visibles: Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        this.toNumber(rescue?.bloques_palets_visibles),
+        rescuedPallets,
+      ),
+      columnas_palets_visibles: Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        this.toNumber(rescue?.columnas_palets_visibles),
+      ),
+      filas_palets_visibles: Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        this.toNumber(rescue?.filas_palets_visibles),
+      ),
+      cajas_estimadas: Math.max(
+        this.toNumber(parsed?.cajas_estimadas),
+        this.toNumber(rescue?.cajas_estimadas),
+        this.toNumber(rescue?.cajas_aprox),
+      ),
+      cajas_aprox: Math.max(
+        this.toNumber(parsed?.cajas_aprox),
+        this.toNumber(rescue?.cajas_aprox),
+        this.toNumber(rescue?.cajas_estimadas),
+      ),
+      front_multi_rescue: true,
+    };
+  }
+
   private async enforceExplicitMultiPalletRecovery(
     img: string,
     parsed: any,
@@ -3468,6 +3587,9 @@ Rules:
       ) {
         parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
       }
+      if (this.shouldRunFrontMultiPalletRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
+      }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
 
       const finalized = this.finalizeVisionResult(parsed);
@@ -3523,6 +3645,9 @@ Rules:
           this.normalizeEnvase(parsed?.envase).includes('sin caja'))
       ) {
         parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
+      }
+      if (this.shouldRunFrontMultiPalletRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
 
