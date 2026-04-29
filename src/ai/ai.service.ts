@@ -2031,6 +2031,7 @@ export class AiService {
     }
 
     parsed = this.applyPalletSceneCorrections(parsed, envase);
+    parsed = this.applyFrontMultiStructuralFallback(parsed, envase);
 
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
@@ -3078,6 +3079,102 @@ ${JSON.stringify(parsed)}`;
       );
       return seeded;
     }
+
+    return parsed;
+  }
+
+  private applyFrontMultiStructuralFallback(parsed: any, envase: string): any {
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() !== 'multi') {
+      return parsed;
+    }
+
+    if (!envase.includes('palet')) {
+      return parsed;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    if (
+      !['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      )
+    ) {
+      return parsed;
+    }
+
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const currentPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const currentBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+
+    if (visibleRows < 8 || visibleColumns < 4 || (currentPallets > 1 && currentBoxes > 0)) {
+      return parsed;
+    }
+
+    const inferredPallets =
+      visibleColumns >= 8
+        ? 3
+        : visibleColumns >= 5
+          ? 2
+          : 1;
+
+    if (inferredPallets <= 1) {
+      return parsed;
+    }
+
+    const palletMeasures = `${parsed?.medidas_palet ?? ''}`.toLowerCase();
+    const boxMeasures = `${parsed?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const perPalletBoxes = visibleRows * (likelyIndustrial ? 4 : 3);
+    const fallbackBoxes = inferredPallets * perPalletBoxes;
+
+    parsed.numero_palets = inferredPallets;
+    parsed.pallet_count = inferredPallets;
+    parsed.numero_palets_visibles_base = Math.max(
+      this.toNumber(parsed?.numero_palets_visibles_base),
+      inferredPallets,
+    );
+    parsed.bases_independientes_visibles = Math.max(
+      this.toNumber(parsed?.bases_independientes_visibles),
+      inferredPallets,
+    );
+    parsed.bloques_palets_visibles = Math.max(
+      this.toNumber(parsed?.bloques_palets_visibles),
+      inferredPallets,
+    );
+    parsed.columnas_palets_visibles = Math.max(
+      this.toNumber(parsed?.columnas_palets_visibles),
+      inferredPallets,
+    );
+    parsed.filas_palets_visibles = Math.max(
+      this.toNumber(parsed?.filas_palets_visibles),
+      1,
+    );
+    parsed.profundidad_estimada = Math.max(
+      this.toNumber(parsed?.profundidad_estimada),
+      likelyIndustrial ? 4 : 3,
+    );
+    parsed.cajas_por_capa = Math.max(
+      this.toNumber(parsed?.cajas_por_capa),
+      likelyIndustrial ? inferredPallets * 4 : inferredPallets * 3,
+    );
+    parsed.capas_estimadas = Math.max(
+      this.toNumber(parsed?.capas_estimadas),
+      visibleRows,
+    );
+    parsed.cajas_estimadas = Math.max(currentBoxes, fallbackBoxes);
+    parsed.cajas_aprox = Math.max(currentBoxes, fallbackBoxes);
+    parsed.envase = 'palet con cajas';
+    parsed.front_multi_structural_fallback = true;
 
     return parsed;
   }
