@@ -1206,10 +1206,6 @@ export class AiService {
       return false;
     }
 
-    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() == 'multi') {
-      return true;
-    }
-
     const visibleRows = this.toNumber(parsed.filas_visibles);
     const visibleColumns = this.toNumber(parsed.columnas_visibles);
     const topBoxes = this.toNumber(parsed.cajas_superiores);
@@ -1233,6 +1229,16 @@ export class AiService {
 
     if (corridorFrontView) {
       return false;
+    }
+
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() == 'multi') {
+      return (
+        ['warehouse', 'almacen', 'top', 'superior'].some((term) =>
+          view.includes(term),
+        ) ||
+        blockCount >= 4 ||
+        (visibleRows <= 3 && topBoxes >= 8)
+      );
     }
 
     return (
