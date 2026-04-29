@@ -4089,7 +4089,7 @@ Rules:
     return 'single';
   }
 
-  private isExplicitFrontMultiScene(stage1: any, palletCountStage: any): boolean {
+  private isExplicitFrontMultiScene(stage1: any, palletCountStage?: any): boolean {
     const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
     const countedPallets = Math.max(
       this.toNumber(stage1?.numero_palets_visibles_base),
@@ -4104,8 +4104,7 @@ Rules:
       ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
         view.includes(term),
       ) &&
-      countedPallets >= 2 &&
-      countedPallets <= 4
+      (countedPallets === 0 || (countedPallets >= 2 && countedPallets <= 4))
     );
   }
 
@@ -4194,6 +4193,28 @@ Rules:
       'OpenAI staged vision step 1',
       220,
     );
+
+    if (
+      requestedScanMode === 'multi' &&
+      this.isExplicitFrontMultiScene(stage1)
+    ) {
+      return this.runDirectFrontMultiVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+        stage1,
+        {
+          numero_palets: this.toNumber(stage1?.numero_palets_visibles_base),
+          bases_independientes_visibles: this.toNumber(
+            stage1?.numero_palets_visibles_base,
+          ),
+          bloques_palets_visibles: this.toNumber(stage1?.numero_palets_visibles_base),
+          columnas_palets_visibles: this.toNumber(stage1?.numero_palets_visibles_base),
+          filas_palets_visibles: this.toNumber(stage1?.numero_palets_visibles_base) > 0 ? 1 : 0,
+        },
+      );
+    }
+
     const precomputedPalletCountStage = await this.requestPalletCountStage(
       imageUrl,
       stage1,
