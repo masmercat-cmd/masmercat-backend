@@ -4089,6 +4089,99 @@ Rules:
     return 'single';
   }
 
+  private isExplicitFrontMultiScene(stage1: any, palletCountStage: any): boolean {
+    const view = `${stage1?.vista ?? ''}`.trim().toLowerCase();
+    const countedPallets = Math.max(
+      this.toNumber(stage1?.numero_palets_visibles_base),
+      this.toNumber(palletCountStage?.numero_palets),
+      this.toNumber(palletCountStage?.bases_independientes_visibles),
+      this.toNumber(palletCountStage?.bloques_palets_visibles),
+      this.toNumber(palletCountStage?.columnas_palets_visibles) *
+        this.toNumber(palletCountStage?.filas_palets_visibles),
+    );
+
+    return (
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      countedPallets >= 2 &&
+      countedPallets <= 4
+    );
+  }
+
+  private async runDirectFrontMultiVisionAnalysis(
+    imageUrl: string,
+    language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+    stage1: any,
+    precomputedPalletCountStage: any,
+  ): Promise<any> {
+    void language;
+    const direct = await this.requestVisionJson(
+      imageUrl,
+      [
+        'Analyze this frontal or diagonal fruit pallet image.',
+        '',
+        'Direct front multi-pallet analysis.',
+        'Count only the few visible pallet blocks from left to right.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "categoria": "fruta/verdura/hongo",',
+        '  "producto": "melocoton/paraguayo/nectarina/granada/manzana/kiwi/etc",',
+        '  "envase": "palet con cajas",',
+        '  "vista": "frontal/lateral/diagonal",',
+        '  "numero_palets": 0,',
+        '  "bloques_palets_visibles": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "columnas_visibles": 0,',
+        '  "filas_visibles": 0,',
+        '  "profundidad_estimada": 0,',
+        '  "cajas_por_capa": 0,',
+        '  "capas_estimadas": 0,',
+        '  "cajas_superiores": 0,',
+        '  "cajas_estimadas": 0,',
+        '  "cajas_aprox": 0,',
+        '  "medidas_caja": "60x40 cm aprox",',
+        '  "medidas_palet": "120x80 cm aprox",',
+        '  "confianza_estimacion": "alta/media/baja"',
+        '}',
+        '',
+        'Rules:',
+        '- This is not a warehouse top-view analysis.',
+        '- Count the visible pallet blocks from left to right across the front scene.',
+        '- If three stacked pallet blocks are visible, return 3.',
+        '- Keep the total limited to the few visible frontal pallet blocks, not 24.',
+        '- Return the total estimated boxes across those visible pallet blocks.',
+        '',
+        'Lectura previa del paso 1:',
+        JSON.stringify(stage1),
+        '',
+        'Conteo previo de palets:',
+        JSON.stringify(precomputedPalletCountStage),
+      ].join('\n'),
+      'OpenAI direct front multi analysis',
+      220,
+    );
+
+    return this.mergeStagedVisionResult(
+      stage1,
+      direct,
+      direct,
+      precomputedPalletCountStage,
+      requestedScanMode,
+      Math.max(
+        this.toNumber(direct?.numero_palets),
+        this.toNumber(direct?.bloques_palets_visibles),
+        this.toNumber(direct?.columnas_palets_visibles) *
+          this.toNumber(direct?.filas_palets_visibles),
+      ) === 2
+        ? 'two'
+        : 'multi',
+    );
+  }
+
   private async runSceneAwareFruitVisionAnalysis(
     imageUrl: string,
     language: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
@@ -4146,6 +4239,19 @@ Rules:
         imageUrl,
         language,
         requestedScanMode,
+      );
+    }
+
+    if (
+      requestedScanMode === 'multi' &&
+      this.isExplicitFrontMultiScene(stage1, precomputedPalletCountStage)
+    ) {
+      return this.runDirectFrontMultiVisionAnalysis(
+        imageUrl,
+        language,
+        requestedScanMode,
+        stage1,
+        precomputedPalletCountStage,
       );
     }
 
