@@ -3323,21 +3323,7 @@ ${JSON.stringify(parsed)}`;
 
     return {
       id: saved.id,
-      image_path: saved.imagePath,
-      image_hash: saved.imageHash,
-      categoria: saved.categoria,
-      producto: saved.producto,
-      envase: saved.envase,
-      cajas_aprox: saved.cajasAprox,
-      cajas_estimadas: saved.cajasAprox,
-      piezas_por_caja: saved.piezasPorCaja,
-      cantidad_aprox: saved.cantidadAprox,
-      cantidad_total_piezas: saved.cantidadAprox,
-      tara_kg: saved.taraKg,
-      peso_bruto_kg: saved.pesoBrutoKg,
-      peso_neto_kg: saved.pesoNetoKg,
-      result: saved.resultadoAi,
-      resultado_ai: saved.resultadoAi,
+      ...this.mapSavedScanResult(saved),
       updatedAt: saved.updatedAt,
     };
   }
