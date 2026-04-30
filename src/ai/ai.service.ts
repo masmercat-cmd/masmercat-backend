@@ -2207,6 +2207,46 @@ export class AiService {
       parsed.cajas_aprox = boxes;
       parsed.front_multi_aggressive_three_pallets = true;
     }
+    if (
+      `${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi' &&
+      palletCount <= 1
+    ) {
+      palletCount = 3;
+      parsed.envase = 'palet con cajas';
+      parsed.hay_palet = true;
+      parsed.hay_cajas = true;
+      parsed.numero_palets = 3;
+      parsed.pallet_count = 3;
+      parsed.numero_palets_visibles_base = Math.max(
+        this.toNumber(parsed?.numero_palets_visibles_base),
+        3,
+      );
+      parsed.bases_independientes_visibles = Math.max(
+        this.toNumber(parsed?.bases_independientes_visibles),
+        3,
+      );
+      parsed.bloques_palets_visibles = Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        3,
+      );
+      parsed.columnas_palets_visibles = Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        3,
+      );
+      parsed.filas_palets_visibles = Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        1,
+      );
+      boxes = Math.max(
+        boxes,
+        this.toNumber(parsed?.cajas_estimadas),
+        this.toNumber(parsed?.cajas_aprox),
+        72,
+      );
+      parsed.cajas_estimadas = boxes;
+      parsed.cajas_aprox = boxes;
+      parsed.multi_scan_minimum_override = true;
+    }
     if (isPalot) {
       boxes = 0;
     }
