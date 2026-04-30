@@ -3116,14 +3116,14 @@ ${JSON.stringify(parsed)}`;
       this.toNumber(parsed?.cajas_aprox),
     );
 
-    if (visibleRows < 8 || visibleColumns < 4 || (currentPallets > 1 && currentBoxes > 0)) {
+    if (visibleRows < 6 || visibleColumns < 4 || (currentPallets > 1 && currentBoxes > 0)) {
       return parsed;
     }
 
     const inferredPallets =
-      visibleColumns >= 8
+      visibleColumns >= 6
         ? 3
-        : visibleColumns >= 5
+        : visibleColumns >= 4
           ? 2
           : 1;
 
@@ -4708,7 +4708,42 @@ Rules:
       this.toNumber(stage3?.numero_palets),
     ].filter((value) => value >= 2 && value <= 4);
 
-    return candidates.length ? Math.max(...candidates) : 0;
+    if (candidates.length) {
+      return Math.max(...candidates);
+    }
+
+    const view = `${stage1?.vista ?? stage2?.vista ?? stage3?.vista ?? ''}`
+      .trim()
+      .toLowerCase();
+    const isFrontLike = ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some(
+      (term) => view.includes(term),
+    );
+    const visibleRows = Math.max(
+      this.toNumber(stage2?.filas_visibles),
+      this.toNumber(stage3?.filas_visibles),
+    );
+    const visibleColumns = Math.max(
+      this.toNumber(stage2?.columnas_visibles),
+      this.toNumber(stage3?.columnas_visibles),
+    );
+    const topBoxes = Math.max(
+      this.toNumber(stage2?.cajas_superiores),
+      this.toNumber(stage3?.cajas_superiores),
+    );
+
+    if (!isFrontLike || visibleRows < 6 || visibleColumns < 4 || topBoxes > 8) {
+      return 0;
+    }
+
+    if (visibleColumns >= 6) {
+      return 3;
+    }
+
+    if (visibleColumns >= 4) {
+      return 2;
+    }
+
+    return 0;
   }
 
   private mergeStagedVisionResult(
@@ -4742,7 +4777,7 @@ Rules:
         view.includes(term),
       ) &&
       structuralRows >= 5 &&
-      this.toNumber(stage2?.cajas_superiores) <= 6;
+      this.toNumber(stage2?.cajas_superiores) <= 8;
     const frontVisiblePallets = this.inferFrontLimitedVisiblePallets(
       stage1,
       stage2,
@@ -4815,6 +4850,21 @@ Rules:
       merged.filas_palets_visibles = 1;
       merged.scan_mode = requestedScanMode;
       merged.scene_pipeline = frontVisiblePallets === 2 ? 'two' : 'multi';
+      if (
+        this.toNumber(merged.cajas_estimadas) <= 0 &&
+        this.toNumber(merged.cajas_aprox) <= 0 &&
+        structuralRows >= 5
+      ) {
+        const palletMeasures = `${merged?.medidas_palet ?? stage2?.medidas_palet ?? ''}`.toLowerCase();
+        const boxMeasures = `${merged?.medidas_caja ?? stage2?.medidas_caja ?? ''}`.toLowerCase();
+        const likelyIndustrial =
+          palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+        const perPalletBoxes = structuralRows * (likelyIndustrial ? 4 : 3);
+        const fallbackBoxes = frontVisiblePallets * perPalletBoxes;
+        merged.cajas_estimadas = fallbackBoxes;
+        merged.cajas_aprox = fallbackBoxes;
+        merged.envase = 'palet con cajas';
+      }
     }
 
     const stagedAuditEntry = {
