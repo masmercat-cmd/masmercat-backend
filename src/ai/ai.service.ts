@@ -2082,17 +2082,10 @@ export class AiService {
       return false;
     }
 
-    if (!envase.includes('palet')) {
-      return false;
-    }
-
     const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
     const frontLike = ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some(
       (term) => view.includes(term),
     );
-    if (!frontLike) {
-      return false;
-    }
 
     const visibleRows = this.toNumber(parsed?.filas_visibles);
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
@@ -2114,9 +2107,13 @@ export class AiService {
     return (
       !warehouseLike &&
       explicitPallets <= 1 &&
-      visibleRows >= 6 &&
-      visibleColumns >= 5 &&
-      topBoxes <= 8
+      (
+        frontLike ||
+        visibleRows >= 6 ||
+        visibleColumns >= 5 ||
+        totalBoxes >= 24
+      ) &&
+      topBoxes <= 10
     );
   }
 
