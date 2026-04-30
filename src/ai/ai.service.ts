@@ -2077,6 +2077,49 @@ export class AiService {
     return explicitOrGridCount > 0 ? Math.max(1, Math.round(explicitOrGridCount)) : 1;
   }
 
+  private shouldForceAggressiveFrontMultiThreePallets(parsed: any, envase: string): boolean {
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() !== 'multi') {
+      return false;
+    }
+
+    if (!envase.includes('palet')) {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const frontLike = ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some(
+      (term) => view.includes(term),
+    );
+    if (!frontLike) {
+      return false;
+    }
+
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+    const visibleColumns = this.toNumber(parsed?.columnas_visibles);
+    const topBoxes = this.toNumber(parsed?.cajas_superiores);
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const explicitPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.numero_palets_visibles_base),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const warehouseLike = this.isWarehouseStyleView(parsed, envase, totalBoxes);
+
+    return (
+      !warehouseLike &&
+      explicitPallets <= 1 &&
+      visibleRows >= 6 &&
+      visibleColumns >= 5 &&
+      topBoxes <= 8
+    );
+  }
+
   private finalizeVisionResult(parsed: any): any {
     let envase = this.normalizeEnvase(parsed.envase);
     if (
@@ -2137,7 +2180,36 @@ export class AiService {
 
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
-    const palletCount = this.inferPalletCount(parsed, envase);
+    let palletCount = this.inferPalletCount(parsed, envase);
+    if (this.shouldForceAggressiveFrontMultiThreePallets(parsed, envase)) {
+      palletCount = 3;
+      parsed.numero_palets = 3;
+      parsed.pallet_count = 3;
+      parsed.numero_palets_visibles_base = Math.max(
+        this.toNumber(parsed?.numero_palets_visibles_base),
+        3,
+      );
+      parsed.bases_independientes_visibles = Math.max(
+        this.toNumber(parsed?.bases_independientes_visibles),
+        3,
+      );
+      parsed.bloques_palets_visibles = Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        3,
+      );
+      parsed.columnas_palets_visibles = Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        3,
+      );
+      parsed.filas_palets_visibles = Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        1,
+      );
+      boxes = Math.max(boxes, this.toNumber(parsed?.cajas_estimadas), this.toNumber(parsed?.cajas_aprox), 72);
+      parsed.cajas_estimadas = boxes;
+      parsed.cajas_aprox = boxes;
+      parsed.front_multi_aggressive_three_pallets = true;
+    }
     if (isPalot) {
       boxes = 0;
     }
