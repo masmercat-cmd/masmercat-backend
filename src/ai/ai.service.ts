@@ -1412,6 +1412,97 @@ export class AiService {
     return parsed;
   }
 
+  private applyHardFrontMultiDirectFallback(parsed: any): any {
+    if (parsed?.front_multi_direct_attempted !== true) {
+      return parsed;
+    }
+
+    if (`${parsed?.scan_mode ?? ''}`.trim().toLowerCase() !== 'multi') {
+      return parsed;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    if (
+      !['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      )
+    ) {
+      return parsed;
+    }
+
+    const explicitPallets = Math.max(
+      this.toNumber(parsed?.numero_palets),
+      this.toNumber(parsed?.pallet_count),
+      this.toNumber(parsed?.numero_palets_visibles_base),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
+    const totalBoxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const warehouseLike = this.isWarehouseStyleView(
+      parsed,
+      this.normalizeEnvase(parsed?.envase || 'palet con cajas'),
+      totalBoxes,
+    );
+
+    if (!warehouseLike && explicitPallets <= 1) {
+      const forcedPallets = 3;
+      const forcedRows = Math.max(this.toNumber(parsed?.filas_visibles), 8);
+      const forcedColumns = Math.max(this.toNumber(parsed?.columnas_visibles), 6);
+      const forcedDepth = Math.max(this.toNumber(parsed?.profundidad_estimada), 3);
+      const forcedBoxes = Math.max(totalBoxes, forcedPallets * forcedRows * 3);
+
+      parsed.envase = 'palet con cajas';
+      parsed.hay_palet = true;
+      parsed.hay_cajas = true;
+      parsed.numero_palets = forcedPallets;
+      parsed.pallet_count = forcedPallets;
+      parsed.numero_palets_visibles_base = Math.max(
+        this.toNumber(parsed?.numero_palets_visibles_base),
+        forcedPallets,
+      );
+      parsed.bases_independientes_visibles = Math.max(
+        this.toNumber(parsed?.bases_independientes_visibles),
+        forcedPallets,
+      );
+      parsed.bloques_palets_visibles = Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        forcedPallets,
+      );
+      parsed.columnas_palets_visibles = Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        forcedPallets,
+      );
+      parsed.filas_palets_visibles = Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        1,
+      );
+      parsed.columnas_visibles = forcedColumns;
+      parsed.filas_visibles = forcedRows;
+      parsed.profundidad_estimada = forcedDepth;
+      parsed.cajas_superiores = Math.max(
+        this.toNumber(parsed?.cajas_superiores),
+        3,
+      );
+      parsed.cajas_por_capa = Math.max(
+        this.toNumber(parsed?.cajas_por_capa),
+        forcedPallets * 3,
+      );
+      parsed.capas_estimadas = Math.max(
+        this.toNumber(parsed?.capas_estimadas),
+        forcedRows,
+      );
+      parsed.cajas_estimadas = forcedBoxes;
+      parsed.cajas_aprox = forcedBoxes;
+      parsed.front_multi_hard_fallback = true;
+    }
+
+    return parsed;
+  }
+
   private shouldForcePalletWithBoxes(parsed: any): boolean {
     const visibleColumns = this.toNumber(parsed?.columnas_visibles);
     const visibleRows = this.toNumber(parsed?.filas_visibles);
@@ -2032,7 +2123,13 @@ export class AiService {
 
     parsed = this.applyPalletSceneCorrections(parsed, envase);
     parsed = this.applyFrontMultiStructuralFallback(parsed, envase);
+    parsed = this.applyHardFrontMultiDirectFallback(parsed);
     if (parsed?.front_multi_structural_fallback === true) {
+      envase = 'palet con cajas';
+      parsed.envase = 'palet con cajas';
+      looksLoose = false;
+    }
+    if (parsed?.front_multi_hard_fallback === true) {
       envase = 'palet con cajas';
       parsed.envase = 'palet con cajas';
       looksLoose = false;
@@ -4559,9 +4656,13 @@ Rules:
               this.toNumber(direct?.cajas_estimadas),
               fallbackBoxes,
             ),
+            front_multi_direct_attempted: true,
             front_multi_direct_override: true,
           }
-        : direct;
+        : {
+            ...direct,
+            front_multi_direct_attempted: true,
+          };
 
     return this.mergeStagedVisionResult(
       stage1,
