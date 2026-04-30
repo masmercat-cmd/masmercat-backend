@@ -4140,6 +4140,43 @@ Rules:
     );
   }
 
+  private async requestFrontMultiVisibleBlocksStage(
+    imageUrl: string,
+    stage1: any,
+  ): Promise<any> {
+    return this.requestVisionJson(
+      imageUrl,
+      [
+        'Analyze this fruit pallet image.',
+        '',
+        'Front multi visible-block count only.',
+        'Count the distinct pallet blocks visible from left to right before estimating anything else.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "bloques_palets_visibles": 0,',
+        '  "numero_palets": 0,',
+        '  "columnas_visibles_frontal": 0,',
+        '  "filas_visibles_frontal": 0,',
+        '  "confianza_bloques": "high/medium/low"',
+        '}',
+        '',
+        'Rules:',
+        '- This is a frontal or diagonal multi-pallet scene, not a warehouse top view.',
+        '- Count distinct vertical pallet blocks from left to right.',
+        '- If three separate tall pallet stacks are visible, return 3.',
+        '- Do not collapse several adjacent stacks into one dominant pallet.',
+        '- columnas_visibles_frontal means the total front columns across the visible pallet blocks.',
+        '- filas_visibles_frontal means the visible stacked rows in height.',
+        '',
+        'Step 1 context:',
+        JSON.stringify(stage1),
+      ].join('\n'),
+      'OpenAI front multi visible blocks',
+      140,
+    );
+  }
+
   private inferScenePipeline(
     stage1: any,
     palletCountStage: any,
@@ -4214,6 +4251,10 @@ Rules:
     precomputedPalletCountStage: any,
   ): Promise<any> {
     void language;
+    const visibleBlocks = await this.requestFrontMultiVisibleBlocksStage(
+      imageUrl,
+      stage1,
+    );
     const direct = await this.requestVisionJson(
       imageUrl,
       [
@@ -4262,17 +4303,72 @@ Rules:
       220,
     );
 
+    const directRows = Math.max(
+      this.toNumber(direct?.filas_visibles),
+      this.toNumber(visibleBlocks?.filas_visibles_frontal),
+    );
+    const directColumns = Math.max(
+      this.toNumber(direct?.columnas_visibles),
+      this.toNumber(visibleBlocks?.columnas_visibles_frontal),
+    );
+    const forcedFrontPallets = Math.max(
+      this.toNumber(visibleBlocks?.numero_palets),
+      this.toNumber(visibleBlocks?.bloques_palets_visibles),
+      directColumns >= 6 && directRows >= 5 ? 3 : 0,
+      directColumns >= 4 && directRows >= 5 ? 2 : 0,
+    );
+    const palletMeasures = `${direct?.medidas_palet ?? ''}`.toLowerCase();
+    const boxMeasures = `${direct?.medidas_caja ?? ''}`.toLowerCase();
+    const likelyIndustrial =
+      palletMeasures.includes('120x100') || boxMeasures.includes('60x40');
+    const fallbackBoxes =
+      forcedFrontPallets >= 2 && directRows >= 5
+        ? forcedFrontPallets * directRows * (likelyIndustrial ? 4 : 3)
+        : 0;
+    const correctedDirect =
+      forcedFrontPallets >= 2
+        ? {
+            ...direct,
+            envase: 'palet con cajas',
+            vista: direct?.vista ?? stage1?.vista ?? 'frontal',
+            numero_palets: forcedFrontPallets,
+            pallet_count: forcedFrontPallets,
+            bloques_palets_visibles: forcedFrontPallets,
+            columnas_palets_visibles: forcedFrontPallets,
+            filas_palets_visibles: 1,
+            columnas_visibles: Math.max(
+              this.toNumber(direct?.columnas_visibles),
+              this.toNumber(visibleBlocks?.columnas_visibles_frontal),
+            ),
+            filas_visibles: Math.max(
+              this.toNumber(direct?.filas_visibles),
+              this.toNumber(visibleBlocks?.filas_visibles_frontal),
+            ),
+            cajas_estimadas: Math.max(
+              this.toNumber(direct?.cajas_estimadas),
+              this.toNumber(direct?.cajas_aprox),
+              fallbackBoxes,
+            ),
+            cajas_aprox: Math.max(
+              this.toNumber(direct?.cajas_aprox),
+              this.toNumber(direct?.cajas_estimadas),
+              fallbackBoxes,
+            ),
+            front_multi_direct_override: true,
+          }
+        : direct;
+
     return this.mergeStagedVisionResult(
       stage1,
-      direct,
-      direct,
+      correctedDirect,
+      correctedDirect,
       precomputedPalletCountStage,
       requestedScanMode,
       Math.max(
-        this.toNumber(direct?.numero_palets),
-        this.toNumber(direct?.bloques_palets_visibles),
-        this.toNumber(direct?.columnas_palets_visibles) *
-          this.toNumber(direct?.filas_palets_visibles),
+        this.toNumber(correctedDirect?.numero_palets),
+        this.toNumber(correctedDirect?.bloques_palets_visibles),
+        this.toNumber(correctedDirect?.columnas_palets_visibles) *
+          this.toNumber(correctedDirect?.filas_palets_visibles),
       ) === 2
         ? 'two'
         : 'multi',
