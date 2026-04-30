@@ -3644,6 +3644,7 @@ Rules:
     const lang = this.resolveVisionPromptLanguage(language || 'es');
     const requestedScanMode =
       options?.scanMode === 'multi' ? 'multi' : 'single';
+    const detectorVision = await this.requestMlVisionDetection(img);
 
     console.log('analyzeFruitImage staged lang:', lang);
     console.log('analyzeFruitImage base64 length:', img.length);
@@ -3695,6 +3696,7 @@ Rules:
         parsed = await this.rescueFrontMultiPalletCount(img, parsed);
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
+      parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
 
       const finalized = this.finalizeVisionResult(parsed);
 
@@ -3754,6 +3756,7 @@ Rules:
         parsed = await this.rescueFrontMultiPalletCount(img, parsed);
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
+      parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
 
       const finalized = this.finalizeVisionResult(parsed);
 
@@ -3795,6 +3798,208 @@ Rules:
     const parsed = JSON.parse(response);
     this.logVisionSnapshot(label, parsed);
     return parsed;
+  }
+
+  private getMlVisionEndpoint(): string {
+    return (
+      this.configService.get<string>('ML_VISION_ENDPOINT') ||
+      process.env.ML_VISION_ENDPOINT ||
+      ''
+    ).trim();
+  }
+
+  private shouldPreferMlVisionDetector(): boolean {
+    const raw =
+      this.configService.get<string>('ML_VISION_PREFER_DETECTOR') ||
+      process.env.ML_VISION_PREFER_DETECTOR ||
+      'false';
+    return ['1', 'true', 'yes', 'on'].includes(`${raw}`.trim().toLowerCase());
+  }
+
+  private getMlVisionMinConfidence(): number {
+    return Math.max(
+      0,
+      this.toNumber(
+        this.configService.get<string>('ML_VISION_MIN_CONFIDENCE') ||
+          process.env.ML_VISION_MIN_CONFIDENCE ||
+          0.45,
+      ),
+    );
+  }
+
+  private getMlVisionTimeoutMs(): number {
+    return Math.max(
+      1000,
+      Math.round(
+        this.toNumber(
+          this.configService.get<string>('ML_VISION_TIMEOUT_MS') ||
+            process.env.ML_VISION_TIMEOUT_MS ||
+            8000,
+        ),
+      ),
+    );
+  }
+
+  private async requestMlVisionDetection(base64Image: string): Promise<any | null> {
+    const endpoint = this.getMlVisionEndpoint();
+    if (!endpoint || !this.shouldPreferMlVisionDetector()) {
+      return null;
+    }
+
+    const apiKey =
+      this.configService.get<string>('ML_VISION_API_KEY') ||
+      process.env.ML_VISION_API_KEY ||
+      '';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (`${apiKey}`.trim()) {
+      headers.Authorization = `Bearer ${apiKey.trim()}`;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.getMlVisionTimeoutMs());
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          image: base64Image,
+          mime_type: 'image/jpeg',
+          task: 'pallet_box_count',
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const details = await response.text().catch(() => '');
+        console.warn('ML vision detector HTTP error:', response.status, details);
+        return null;
+      }
+
+      const parsed = await response.json();
+      this.logVisionSnapshot('ML vision detector response', parsed);
+      return parsed;
+    } catch (error: any) {
+      console.warn('ML vision detector request failed:', error?.message || error);
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private mergeMlVisionDetection(
+    parsed: any,
+    detection: any,
+    requestedScanMode: 'single' | 'multi',
+  ): any {
+    if (!detection || typeof detection !== 'object') {
+      return parsed;
+    }
+
+    const summary = detection?.summary && typeof detection.summary === 'object'
+      ? detection.summary
+      : detection;
+    const confidence = this.toNumber(summary?.confidence);
+    if (confidence < this.getMlVisionMinConfidence()) {
+      return parsed;
+    }
+
+    const detectorPallets = Math.max(
+      this.toNumber(summary?.pallet_count),
+      this.toNumber(summary?.numero_palets),
+    );
+    const detectorBoxes = Math.max(
+      this.toNumber(summary?.box_count),
+      this.toNumber(summary?.cajas_estimadas),
+    );
+    const detectorColumns = Math.max(
+      this.toNumber(summary?.visible_columns),
+      this.toNumber(summary?.columnas_visibles),
+    );
+    const detectorRows = Math.max(
+      this.toNumber(summary?.visible_rows),
+      this.toNumber(summary?.filas_visibles),
+    );
+    const detectorDepth = Math.max(
+      this.toNumber(summary?.estimated_depth),
+      this.toNumber(summary?.profundidad_estimada),
+    );
+    const detectorTopBoxes = Math.max(
+      this.toNumber(summary?.top_boxes),
+      this.toNumber(summary?.cajas_superiores),
+    );
+
+    const merged = {
+      ...parsed,
+      detector_provider: detection?.provider ?? summary?.provider ?? 'ml-vision',
+      detector_confidence: confidence,
+    };
+
+    if (requestedScanMode === 'multi' && detectorPallets >= 2) {
+      merged.numero_palets = detectorPallets;
+      merged.pallet_count = detectorPallets;
+      merged.numero_palets_visibles_base = Math.max(
+        this.toNumber(parsed?.numero_palets_visibles_base),
+        detectorPallets,
+      );
+      merged.bases_independientes_visibles = Math.max(
+        this.toNumber(parsed?.bases_independientes_visibles),
+        detectorPallets,
+      );
+      merged.bloques_palets_visibles = Math.max(
+        this.toNumber(parsed?.bloques_palets_visibles),
+        detectorPallets,
+      );
+      merged.columnas_palets_visibles = Math.max(
+        this.toNumber(parsed?.columnas_palets_visibles),
+        detectorPallets,
+      );
+      merged.filas_palets_visibles = Math.max(
+        this.toNumber(parsed?.filas_palets_visibles),
+        1,
+      );
+      merged.envase = 'palet con cajas';
+      merged.scene_pipeline = detectorPallets === 2 ? 'two' : 'multi';
+    }
+
+    if (detectorColumns > 0) {
+      merged.columnas_visibles = Math.max(
+        this.toNumber(parsed?.columnas_visibles),
+        detectorColumns,
+      );
+    }
+    if (detectorRows > 0) {
+      merged.filas_visibles = Math.max(
+        this.toNumber(parsed?.filas_visibles),
+        detectorRows,
+      );
+    }
+    if (detectorDepth > 0) {
+      merged.profundidad_estimada = Math.max(
+        this.toNumber(parsed?.profundidad_estimada),
+        detectorDepth,
+      );
+    }
+    if (detectorTopBoxes > 0) {
+      merged.cajas_superiores = Math.max(
+        this.toNumber(parsed?.cajas_superiores),
+        detectorTopBoxes,
+      );
+    }
+    if (detectorBoxes > 0) {
+      merged.cajas_estimadas = Math.max(
+        this.toNumber(parsed?.cajas_estimadas),
+        detectorBoxes,
+      );
+      merged.cajas_aprox = Math.max(
+        this.toNumber(parsed?.cajas_aprox),
+        detectorBoxes,
+      );
+    }
+
+    return merged;
   }
 
   private buildFastSinglePalletStage3(stage1: any, stage2: any): any {
