@@ -2376,6 +2376,8 @@ export class AiService {
 
     parsed.debug_vision = {
       scene_pipeline: `${parsed.scene_pipeline ?? ''}`.trim() || 'unknown',
+      scan_mode: `${parsed.scan_mode ?? parsed.requested_scan_mode ?? ''}`.trim() || 'unknown',
+      requested_scan_mode: `${parsed.requested_scan_mode ?? parsed.scan_mode ?? ''}`.trim() || 'unknown',
       envase_raw: this.normalizeEnvase(parsed.envase),
       producto_raw: `${parsed.producto ?? parsed.fruta ?? ''}`.trim(),
       forced_pallet_boxes: this.shouldForcePalletWithBoxes(parsed),
@@ -2507,7 +2509,18 @@ export class AiService {
     }
 
     parsed.numero_palets = palletCount;
+    parsed.pallet_count = palletCount;
     parsed.modo_conteo = likelyWarehouseBatch ? 'warehouse' : 'single_pallet';
+    parsed.debug_scan_mode = parsed.debug_vision.scan_mode;
+    parsed.debug_requested_scan_mode = parsed.debug_vision.requested_scan_mode;
+    parsed.debug_scene_pipeline = parsed.debug_vision.scene_pipeline;
+    parsed.debug_numero_palets = palletCount;
+    parsed.debug_summary =
+      `mode:${parsed.debug_vision.scan_mode}` +
+      ` req:${parsed.debug_vision.requested_scan_mode}` +
+      ` pipe:${parsed.debug_vision.scene_pipeline}` +
+      ` pallets:${palletCount}` +
+      ` boxes:${this.toNumber(parsed.cajas_estimadas)}`;
 
     if (
       envase.includes('palet') &&
@@ -3889,6 +3902,8 @@ Rules:
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
+      parsed.scan_mode = requestedScanMode;
+      parsed.requested_scan_mode = requestedScanMode;
 
       const finalized = this.finalizeVisionResult(parsed);
 
@@ -3949,6 +3964,8 @@ Rules:
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
+      parsed.scan_mode = requestedScanMode;
+      parsed.requested_scan_mode = requestedScanMode;
 
       const finalized = this.finalizeVisionResult(parsed);
 
