@@ -61,6 +61,53 @@ export class AiController {
       `controller-force multi pallets:3 raw:${pallets}` +
       ` pipe:${forced.scene_pipeline}`;
 
+    if (!`${forced.envase ?? ''}`.trim()) {
+      forced.envase = 'palet con cajas';
+    }
+    forced.hay_palet = true;
+    forced.hay_cajas = true;
+
+    const existingBoxes = Math.max(
+      this.toNumber(forced?.cajas_estimadas),
+      this.toNumber(forced?.cajas_aprox),
+    );
+    const forcedBoxes = Math.max(existingBoxes, 72);
+    forced.cajas_estimadas = forcedBoxes;
+    forced.cajas_aprox = forcedBoxes;
+
+    const taraKg = Math.max(this.toNumber(forced?.tara_kg), 60);
+    const grossKg = Math.max(
+      this.toNumber(forced?.peso_bruto_kg),
+      this.toNumber(forced?.peso_estimado_kg),
+      forcedBoxes * 7.5 + taraKg,
+    );
+    forced.tara_kg = taraKg;
+    forced.peso_bruto_kg = grossKg;
+    forced.peso_estimado_kg = grossKg;
+    forced.peso_neto_kg = Math.max(
+      this.toNumber(forced?.peso_neto_kg),
+      grossKg - taraKg,
+    );
+
+    if (!`${forced.categoria ?? ''}`.trim()) {
+      forced.categoria = 'fruta';
+    }
+    if (!`${forced.producto ?? forced.fruta ?? ''}`.trim()) {
+      forced.producto = 'por confirmar';
+    }
+    forced.calibre =
+      `${forced.calibre ?? ''}`.trim() ||
+      'multi forzado';
+    forced.calidad =
+      `${forced.calidad ?? ''}`.trim() ||
+      `revision manual | ${forced.debug_summary}`;
+    if (!`${forced.medidas_caja ?? ''}`.trim()) {
+      forced.medidas_caja = '60x40 cm aprox';
+    }
+    if (!`${forced.medidas_palet ?? ''}`.trim()) {
+      forced.medidas_palet = 'Palet industrial (120x100 cm aprox)';
+    }
+
     if (forced?.debug_vision && typeof forced.debug_vision === 'object') {
       forced.debug_vision = {
         ...forced.debug_vision,
@@ -84,6 +131,8 @@ export class AiController {
           this.toNumber(forced.debug_vision?.filas_palets_visibles),
           1,
         ),
+        cajas_estimadas: forcedBoxes,
+        cajas_aprox: forcedBoxes,
       };
     }
 
