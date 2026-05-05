@@ -7,6 +7,16 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 export class AiController {
   constructor(private aiService: AiService) {}
 
+  @Get('debug-version')
+  getDebugVersion() {
+    return {
+      ok: true,
+      service: 'ai',
+      build_marker: '2026-05-05-ai-pallet-debug-v1',
+      expected_commit: '74ba731f',
+    };
+  }
+
   @Post('chat')
   async chat(@Req() req: Request, @Body() body: any) {
     console.log('✅ ENTRO A /ai/chat');
