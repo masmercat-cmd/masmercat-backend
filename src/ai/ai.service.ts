@@ -3129,6 +3129,36 @@ ${JSON.stringify(parsed)}`;
     );
   }
 
+  private shouldRunFrontMultiEnrichment(
+    parsed: any,
+    requestedScanMode: 'single' | 'multi',
+  ): boolean {
+    if (requestedScanMode !== 'multi') {
+      return false;
+    }
+
+    const view = `${parsed?.vista ?? ''}`.trim().toLowerCase();
+    const producto = `${parsed?.producto ?? parsed?.fruta ?? ''}`.trim();
+    const boxes = Math.max(
+      this.toNumber(parsed?.cajas_estimadas),
+      this.toNumber(parsed?.cajas_aprox),
+    );
+    const netKg = Math.max(
+      this.toNumber(parsed?.peso_neto_kg),
+      this.toNumber(parsed?.peso_bruto_kg),
+      this.toNumber(parsed?.peso_estimado_kg),
+    );
+    const visibleRows = this.toNumber(parsed?.filas_visibles);
+
+    return (
+      ['frontal', 'front', 'lateral', 'side', 'diagonal', 'corner'].some((term) =>
+        view.includes(term),
+      ) &&
+      visibleRows >= 4 &&
+      (!producto || boxes <= 0 || netKg <= 0)
+    );
+  }
+
   private async rescueFrontMultiPalletCount(
     img: string,
     parsed: any,
@@ -3900,6 +3930,9 @@ Rules:
       if (this.shouldRunFrontMultiPalletRescue(parsed, requestedScanMode)) {
         parsed = await this.rescueFrontMultiPalletCount(img, parsed);
       }
+      if (this.shouldRunFrontMultiEnrichment(parsed, requestedScanMode)) {
+        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
+      }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
@@ -3960,6 +3993,9 @@ Rules:
         parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
       }
       if (this.shouldRunFrontMultiPalletRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
+      }
+      if (this.shouldRunFrontMultiEnrichment(parsed, requestedScanMode)) {
         parsed = await this.rescueFrontMultiPalletCount(img, parsed);
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
