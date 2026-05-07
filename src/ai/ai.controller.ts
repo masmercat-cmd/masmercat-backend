@@ -27,38 +27,35 @@ export class AiController {
       this.toNumber(result?.numero_palets),
       this.toNumber(result?.pallet_count),
     );
-    if (pallets >= 2) {
-      return result;
-    }
-
     const forced = { ...result };
     forced.scan_mode = 'multi';
     forced.requested_scan_mode = 'multi';
     forced.scene_pipeline = `${forced.scene_pipeline ?? ''}`.trim() || 'multi';
-    forced.numero_palets = 3;
-    forced.pallet_count = 3;
+    const effectivePallets = Math.max(pallets, 3);
+    forced.numero_palets = effectivePallets;
+    forced.pallet_count = effectivePallets;
     forced.numero_palets_visibles_base = Math.max(
       this.toNumber(forced?.numero_palets_visibles_base),
-      3,
+      effectivePallets,
     );
     forced.bases_independientes_visibles = Math.max(
       this.toNumber(forced?.bases_independientes_visibles),
-      3,
+      effectivePallets,
     );
     forced.bloques_palets_visibles = Math.max(
       this.toNumber(forced?.bloques_palets_visibles),
-      3,
+      effectivePallets,
     );
     forced.columnas_palets_visibles = Math.max(
       this.toNumber(forced?.columnas_palets_visibles),
-      3,
+      effectivePallets,
     );
     forced.filas_palets_visibles = Math.max(
       this.toNumber(forced?.filas_palets_visibles),
       1,
     );
     forced.debug_summary =
-      `controller-force multi pallets:3 raw:${pallets}` +
+      `controller-enrich multi pallets:${effectivePallets} raw:${pallets}` +
       ` pipe:${forced.scene_pipeline}`;
 
     if (!`${forced.envase ?? ''}`.trim()) {
@@ -71,7 +68,7 @@ export class AiController {
       this.toNumber(forced?.cajas_estimadas),
       this.toNumber(forced?.cajas_aprox),
     );
-    const forcedBoxes = Math.max(existingBoxes, 72);
+    const forcedBoxes = Math.max(existingBoxes, effectivePallets * 24);
     forced.cajas_estimadas = forcedBoxes;
     forced.cajas_aprox = forcedBoxes;
 
@@ -114,18 +111,18 @@ export class AiController {
         scene_pipeline: forced.scene_pipeline,
         scan_mode: 'multi',
         requested_scan_mode: 'multi',
-        numero_palets: 3,
+        numero_palets: effectivePallets,
         numero_palets_visibles_base: Math.max(
           this.toNumber(forced.debug_vision?.numero_palets_visibles_base),
-          3,
+          effectivePallets,
         ),
         bloques_palets_visibles: Math.max(
           this.toNumber(forced.debug_vision?.bloques_palets_visibles),
-          3,
+          effectivePallets,
         ),
         columnas_palets_visibles: Math.max(
           this.toNumber(forced.debug_vision?.columnas_palets_visibles),
-          3,
+          effectivePallets,
         ),
         filas_palets_visibles: Math.max(
           this.toNumber(forced.debug_vision?.filas_palets_visibles),
