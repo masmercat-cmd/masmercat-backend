@@ -68,7 +68,7 @@ export class AiController {
       this.toNumber(forced?.cajas_estimadas),
       this.toNumber(forced?.cajas_aprox),
     );
-    const forcedBoxes = Math.max(existingBoxes, effectivePallets * 24);
+    const forcedBoxes = Math.max(existingBoxes, effectivePallets * 72);
     forced.cajas_estimadas = forcedBoxes;
     forced.cajas_aprox = forcedBoxes;
 
