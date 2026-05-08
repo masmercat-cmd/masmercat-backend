@@ -3243,6 +3243,58 @@ ${JSON.stringify(parsed)}`;
     };
   }
 
+  private async rescueLabelOcrProduct(
+    img: string,
+    parsed: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      `data:image/jpeg;base64,${img}`,
+      [
+        'Read this palletized fruit image like a label/OCR task.',
+        '',
+        'Goal: identify the fruit product from any visible box label, sticker, printed variety, or short readable commercial text.',
+        'Do not recount pallets. Do not estimate weight. Focus on text and product identity only.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "texto_visible": "short readable label text if any",',
+        '  "variedad_visible": "short variety or brand clue if any",',
+        '  "producto": "melocoton/paraguayo/nectarina/granada/manzana/kiwi/sandia/melon/etc",',
+        '  "confianza_producto": "alta/media/baja"',
+        '}',
+        '',
+        'Rules:',
+        '- Prioritize any readable sticker, label, printed code, variety or brand word on the front of the boxes.',
+        '- If you can read a variety such as Gala, Fuji, Golden, Granny, Pink Lady or Story, producto must be manzana.',
+        '- Distinguish melocoton, paraguayo and nectarina carefully.',
+        '- If text is unclear but fruit color/shape strongly suggests one product, you may infer it.',
+        '- If not confident, keep producto empty.',
+        '',
+        'Current parsed context:',
+        JSON.stringify(parsed),
+      ].join('\n'),
+      'OpenAI label OCR product rescue',
+      120,
+    );
+
+    const rescuedProduct =
+      this.normalizeProducto(
+        rescue?.producto ??
+          rescue?.texto_visible ??
+          rescue?.variedad_visible ??
+          '',
+      ) || parsed?.producto;
+
+    return {
+      ...parsed,
+      ...rescue,
+      producto: rescuedProduct,
+      texto_visible: rescue?.texto_visible ?? parsed?.texto_visible,
+      variedad_visible: rescue?.variedad_visible ?? parsed?.variedad_visible,
+      label_ocr_rescue: true,
+    };
+  }
+
   private async rescueFrontMultiPalletCount(
     img: string,
     parsed: any,
@@ -4020,6 +4072,9 @@ Rules:
       if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
         parsed = await this.rescueProductIdentification(img, parsed);
       }
+      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueLabelOcrProduct(img, parsed);
+      }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
@@ -4087,6 +4142,9 @@ Rules:
       }
       if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
         parsed = await this.rescueProductIdentification(img, parsed);
+      }
+      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueLabelOcrProduct(img, parsed);
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
