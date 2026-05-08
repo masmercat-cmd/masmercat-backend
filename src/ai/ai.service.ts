@@ -3159,6 +3159,90 @@ ${JSON.stringify(parsed)}`;
     );
   }
 
+  private shouldRunProductIdentificationRescue(
+    parsed: any,
+    requestedScanMode: 'single' | 'multi',
+  ): boolean {
+    if (requestedScanMode !== 'multi') {
+      return false;
+    }
+
+    const producto = `${parsed?.producto ?? parsed?.fruta ?? ''}`.trim().toLowerCase();
+    const textHints = [
+      parsed?.texto_visible,
+      parsed?.visible_text,
+      parsed?.ocr_text,
+      parsed?.label_text,
+      parsed?.etiqueta_visible,
+      parsed?.marcas_visibles,
+      parsed?.marca_visible,
+      parsed?.variedad_visible,
+    ]
+      .map((value) => `${value ?? ''}`.trim())
+      .filter((value) => value.length > 0)
+      .join(' | ');
+
+    return (
+      !producto ||
+      producto === 'por confirmar' ||
+      producto === 'desconocido' ||
+      !this.normalizeProducto(textHints)
+    );
+  }
+
+  private async rescueProductIdentification(
+    img: string,
+    parsed: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      `data:image/jpeg;base64,${img}`,
+      [
+        'Analyze this palletized fruit image.',
+        '',
+        'Emergency product identification pass only.',
+        'Focus on readable labels, visible fruit color/shape, and commercial box pattern.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "producto": "melocoton/paraguayo/nectarina/granada/manzana/kiwi/sandia/melon/etc",',
+        '  "categoria": "fruta/verdura/hongo",',
+        '  "texto_visible": "short readable label text or variety if visible",',
+        '  "variedad_visible": "short variety name if visible",',
+        '  "confianza_producto": "alta/media/baja"',
+        '}',
+        '',
+        'Rules:',
+        '- If a readable label or variety is visible, prioritize it.',
+        '- Distinguish melocoton, paraguayo and nectarina carefully.',
+        '- If visible labels show apple varieties such as Story, Gala, Fuji, Golden, Granny or Pink Lady, return manzana.',
+        '- If you are not confident, keep producto empty rather than inventing a random fruit.',
+        '',
+        'Current parsed context:',
+        JSON.stringify(parsed),
+      ].join('\n'),
+      'OpenAI product identification rescue',
+      120,
+    );
+
+    const rescuedProduct =
+      this.normalizeProducto(
+        rescue?.producto ??
+          rescue?.texto_visible ??
+          rescue?.variedad_visible ??
+          '',
+      ) || parsed?.producto;
+
+    return {
+      ...parsed,
+      ...rescue,
+      producto: rescuedProduct,
+      categoria: rescue?.categoria ?? parsed?.categoria,
+      texto_visible: rescue?.texto_visible ?? parsed?.texto_visible,
+      variedad_visible: rescue?.variedad_visible ?? parsed?.variedad_visible,
+      product_rescue: true,
+    };
+  }
+
   private async rescueFrontMultiPalletCount(
     img: string,
     parsed: any,
@@ -3933,6 +4017,9 @@ Rules:
       if (this.shouldRunFrontMultiEnrichment(parsed, requestedScanMode)) {
         parsed = await this.rescueFrontMultiPalletCount(img, parsed);
       }
+      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueProductIdentification(img, parsed);
+      }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
@@ -3997,6 +4084,9 @@ Rules:
       }
       if (this.shouldRunFrontMultiEnrichment(parsed, requestedScanMode)) {
         parsed = await this.rescueFrontMultiPalletCount(img, parsed);
+      }
+      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueProductIdentification(img, parsed);
       }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
