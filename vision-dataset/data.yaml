@@ -1,0 +1,10 @@
+path: ../vision-dataset
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: pallet_base
+  1: front_face_box
+  2: side_face_box
+  3: pallet_bin_front

@@ -16,7 +16,7 @@ Este dataset se ha preparado a partir de fotos anonimizadas para entrenar/mejora
 
 ## Importante
 - Estas imagenes ya no muestran marca comercial visible, pero el ground truth debe rellenarse con datos reales del proveedor.
-- Sin `ground_truth` correcto no podremos enseñar a Nara a contar mejor.
+- Sin `ground_truth` correcto no podremos ensenar a Nara a contar mejor.
 - Los casos reales recibidos por chat y todavia no enlazados a un archivo del dataset se guardan en `validated_reference_cases.csv`.
 
 ## Flujo recomendado ahora
@@ -32,7 +32,7 @@ Este dataset se ha preparado a partir de fotos anonimizadas para entrenar/mejora
 - normalizacion de producto (`melocoton calanda`, `granadas`)
 - deteccion de palet unico en esquina
 - conteo alto de escenas densas de almacen
-- Cada nuevo caso real confirmado deberia añadirse a `validated_reference_cases.csv` y, si es representativo, tambien al script de regresion.
+- Cada nuevo caso real confirmado deberia anadirse a `validated_reference_cases.csv` y, si es representativo, tambien al script de regresion.
 
 ## Datos parciales tambien valen
 - No hace falta conocer peso y piezas por caja en todas las fotos.
@@ -42,3 +42,11 @@ Este dataset se ha preparado a partir de fotos anonimizadas para entrenar/mejora
 - `real_pallets` si se sabe
 - Usa `known_data_level` para indicar que informacion conoces de verdad.
 - Usa `boxes_exact`, `pallets_exact` y `weight_exact` para marcar que campos son exactos y cuales no.
+
+## Entrenamiento YOLO
+- El dataset YOLO vive en `vision-dataset/` con imagenes en `images/{train,val,test}` y labels en `labels/{train,val,test}`.
+- El fichero de configuracion para Ultralytics es `vision-dataset/data.yaml`.
+- Antes de entrenar, valida el dataset con `python scripts/validate_yolo_dataset.py`.
+- Entrena con `python scripts/train_yolo_pallet_detector.py --device cpu`.
+- El mejor modelo se copiara a `vision-service/models/pallet-yolo.pt`.
+- Ese `.pt` encaja directamente con el microservicio de `vision-service/`.

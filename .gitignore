@@ -8,3 +8,7 @@ flutter
 git
 vision-service/models
 vision-service/runs
+vision-service/.venv/
+vision-dataset/images/
+vision-dataset/ground_truth.csv
+vision-dataset/validated_reference_cases.csv
