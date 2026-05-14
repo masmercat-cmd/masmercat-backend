@@ -2,3 +2,9 @@ node_modules
 dist
 .env
 npm-debug.log
+*.log
+tmp/
+flutter
+git
+vision-service/models
+vision-service/runs

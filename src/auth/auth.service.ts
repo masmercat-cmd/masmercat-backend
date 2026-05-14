@@ -20,14 +20,14 @@ export class RegisterDto {
   @MinLength(8)
   password: string;
 
-  @IsEnum(['admin', 'seller', 'buyer'])
+  @IsEnum(UserRole)
   role: UserRole;
 
   @IsString()
   country: string;
 
   @IsOptional()
-  @IsEnum(['es', 'en', 'fr', 'de', 'pt', 'ar', 'zh', 'hi'])
+  @IsEnum(Language)
   language?: Language;
 
   @IsOptional()
@@ -46,6 +46,10 @@ export class LoginDto {
   @IsString()
   password: string;
 }
+
+export type ProfileUpdateData = Partial<
+  Pick<User, 'name' | 'language' | 'country' | 'phone' | 'company'>
+>;
 
 @Injectable()
 export class AuthService {
@@ -77,9 +81,8 @@ export class AuthService {
       ipAddress,
       userAgent,
     });
-    const { password, ...result } = user;
     return {
-      user: result,
+      user: this.sanitizeUser(user),
       token: this.generateToken(user),
     };
   }
@@ -102,24 +105,28 @@ export class AuthService {
       ipAddress,
       userAgent,
     });
-    const { password, ...result } = user;
     return {
-      user: result,
+      user: this.sanitizeUser(user),
       token: this.generateToken(user),
     };
   }
 
-  async updateProfile(userId: string, updateData: any) {
+  async updateProfile(userId: string, updateData: ProfileUpdateData) {
     const user = await this.userRepository.findOne({
       where: { id: userId, isActive: true },
     });
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    Object.assign(user, updateData);
+
+    user.name = updateData.name ?? user.name;
+    user.language = updateData.language ?? user.language;
+    user.country = updateData.country ?? user.country;
+    user.phone = updateData.phone ?? user.phone;
+    user.company = updateData.company ?? user.company;
+
     await this.userRepository.save(user);
-    const { password, ...result } = user;
-    return result;
+    return this.sanitizeUser(user);
   }
 
   private generateToken(user: User): string {
@@ -131,5 +138,10 @@ export class AuthService {
     return this.userRepository.findOne({
       where: { id: userId, isActive: true },
     });
+  }
+
+  sanitizeUser(user: User): Omit<User, 'password'> {
+    const { password, ...sanitizedUser } = user;
+    return sanitizedUser;
   }
 }

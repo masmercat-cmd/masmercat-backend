@@ -39,14 +39,14 @@ export class LotsController {
     return this.lotsService.getLots({ ...filterDto, isOpportunity: true });
   }
 
-  @Get(':id')
-  async getLot(@Param('id') id: string) {
-    return this.lotsService.getLotById(id);
-  }
-
   @UseGuards(JwtAuthGuard)
   @Get('my/lots')
   async getMyLots(@Req() req: any, @Query('page') page?: number, @Query('limit') limit?: number) {
     return this.lotsService.getMyLots(req.user, page, limit);
+  }
+
+  @Get(':id')
+  async getLot(@Param('id') id: string) {
+    return this.lotsService.getLotById(id);
   }
 }

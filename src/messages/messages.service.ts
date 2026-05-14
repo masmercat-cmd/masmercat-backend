@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Message, MessageStatus } from '../entities/message.entity';
@@ -14,10 +15,22 @@ import { EventType } from '../entities/log.entity';
 import { MessagesRealtimeService } from './messages-realtime.service';
 
 export class CreateMessageDto {
+  @IsString()
   lotId: string;
+
+  @IsString()
   message: string;
+
+  @IsOptional()
+  @IsBoolean()
   requestCall?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   requestVideo?: boolean;
+
+  @IsOptional()
+  @IsString()
   recipientUserId?: string;
 }
 
@@ -33,6 +46,48 @@ export class MessagesService {
     private logService: LogService,
     private messagesRealtimeService: MessagesRealtimeService,
   ) {}
+
+  private normalizePositiveNumber(value: number | string | undefined, fallback: number): number {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      return fallback;
+    }
+
+    return Math.floor(normalized);
+  }
+
+  private sanitizeUser<T extends Partial<User> | null | undefined>(user: T): T {
+    if (!user) {
+      return user;
+    }
+
+    const { password, ...sanitizedUser } = user as User;
+    return sanitizedUser as T;
+  }
+
+  private sanitizeLot<T extends Partial<Lot> | null | undefined>(lot: T): T {
+    if (!lot) {
+      return lot;
+    }
+
+    return {
+      ...lot,
+      seller: this.sanitizeUser((lot as Lot).seller),
+    } as T;
+  }
+
+  private sanitizeMessage<T extends Message | null>(message: T): T {
+    if (!message) {
+      return message;
+    }
+
+    return {
+      ...message,
+      buyer: this.sanitizeUser(message.buyer),
+      seller: this.sanitizeUser(message.seller),
+      lot: this.sanitizeLot(message.lot),
+    } as T;
+  }
 
   async createMessage(
     createMessageDto: CreateMessageDto,
@@ -118,40 +173,46 @@ export class MessagesService {
     }
 
     this.messagesRealtimeService.emitMessageCreated(hydrated);
-    return hydrated;
+    return this.sanitizeMessage(hydrated);
   }
 
   async getMessagesForSeller(seller: User, page: number = 1, limit: number = 50) {
+    const normalizedPage = this.normalizePositiveNumber(page, 1);
+    const normalizedLimit = this.normalizePositiveNumber(limit, 50);
+
     const [messages, total] = await this.messageRepository.findAndCount({
       where: { sellerId: seller.id },
       relations: ['buyer', 'lot', 'lot.fruit', 'lot.market'],
       order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
+      skip: (normalizedPage - 1) * normalizedLimit,
+      take: normalizedLimit,
     });
 
     return {
-      messages,
+      messages: messages.map((message) => this.sanitizeMessage(message)),
       total,
-      page,
-      totalPages: Math.ceil(total / limit),
+      page: normalizedPage,
+      totalPages: Math.ceil(total / normalizedLimit),
     };
   }
 
   async getMessagesForBuyer(buyer: User, page: number = 1, limit: number = 50) {
+    const normalizedPage = this.normalizePositiveNumber(page, 1);
+    const normalizedLimit = this.normalizePositiveNumber(limit, 50);
+
     const [messages, total] = await this.messageRepository.findAndCount({
       where: { buyerId: buyer.id },
       relations: ['seller', 'lot', 'lot.fruit', 'lot.market'],
       order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
+      skip: (normalizedPage - 1) * normalizedLimit,
+      take: normalizedLimit,
     });
 
     return {
-      messages,
+      messages: messages.map((message) => this.sanitizeMessage(message)),
       total,
-      page,
-      totalPages: Math.ceil(total / limit),
+      page: normalizedPage,
+      totalPages: Math.ceil(total / normalizedLimit),
     };
   }
 
@@ -175,7 +236,7 @@ export class MessagesService {
     message.status = MessageStatus.READ;
     const saved = await this.messageRepository.save(message);
     this.messagesRealtimeService.emitMessageRead(saved);
-    return saved;
+    return this.sanitizeMessage(saved);
   }
 
   async getThreadMessages(
@@ -200,7 +261,7 @@ export class MessagesService {
       throw new ForbiddenException('Thread not allowed');
     }
 
-    return this.messageRepository.find({
+    const messages = await this.messageRepository.find({
       where: {
         lotId,
         buyerId,
@@ -209,6 +270,8 @@ export class MessagesService {
       relations: ['buyer', 'seller', 'lot', 'lot.fruit', 'lot.market'],
       order: { createdAt: 'ASC' },
     });
+
+    return messages.map((message) => this.sanitizeMessage(message));
   }
 
   async markThreadAsRead(
@@ -233,18 +296,21 @@ export class MessagesService {
   }
 
   async getAllMessages(page: number = 1, limit: number = 50) {
+    const normalizedPage = this.normalizePositiveNumber(page, 1);
+    const normalizedLimit = this.normalizePositiveNumber(limit, 50);
+
     const [messages, total] = await this.messageRepository.findAndCount({
       relations: ['buyer', 'seller', 'lot', 'lot.fruit', 'lot.market'],
       order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
+      skip: (normalizedPage - 1) * normalizedLimit,
+      take: normalizedLimit,
     });
 
     return {
-      messages,
+      messages: messages.map((message) => this.sanitizeMessage(message)),
       total,
-      page,
-      totalPages: Math.ceil(total / limit),
+      page: normalizedPage,
+      totalPages: Math.ceil(total / normalizedLimit),
     };
   }
 }

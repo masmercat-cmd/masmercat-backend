@@ -1,8 +1,9 @@
-import { Controller, Post, Put, Body, Req, UseGuards, Get } from '@nestjs/common';
-import { AuthService, RegisterDto, LoginDto } from './auth.service';
+import { Controller, Post, Put, Body, Req, UseGuards, Get, ValidationPipe, UsePipes } from '@nestjs/common';
+import { AuthService, RegisterDto, LoginDto, ProfileUpdateData } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Request } from 'express';
-import { IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional, IsEnum } from 'class-validator';
+import { Language } from '../entities/user.entity';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -10,8 +11,8 @@ export class UpdateProfileDto {
   name?: string;
 
   @IsOptional()
-  @IsString()
-  language?: string;
+  @IsEnum(Language)
+  language?: Language;
 
   @IsOptional()
   @IsString()
@@ -27,6 +28,7 @@ export class UpdateProfileDto {
 }
 
 @Controller('auth')
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 export class AuthController {
   constructor(private authService: AuthService) {}
 
@@ -47,12 +49,12 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get('profile')
   async getProfile(@Req() req: any) {
-    return req.user;
+    return this.authService.sanitizeUser(req.user);
   }
 
   @UseGuards(JwtAuthGuard)
   @Put('profile')
   async updateProfile(@Req() req: any, @Body() updateDto: UpdateProfileDto) {
-    return this.authService.updateProfile(req.user.id, updateDto);
+    return this.authService.updateProfile(req.user.id, updateDto as ProfileUpdateData);
   }
 }

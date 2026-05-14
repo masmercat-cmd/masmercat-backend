@@ -14,6 +14,7 @@ export class ChatMessageDto {
   image?: string;
   imageMimeType?: string;
   imageName?: string;
+  context?: Record<string, any> | string;
 }
 
 export class TransportTariffDto {
@@ -3792,6 +3793,52 @@ For image-based answers:
 Respond always in ${finalLanguage}.`;
   }
 
+  private buildNaraContextInstruction(context: any, language: string): string {
+    if (!context) {
+      return '';
+    }
+
+    let serialized = '';
+    try {
+      serialized =
+        typeof context === 'string'
+          ? context.trim()
+          : JSON.stringify(context, null, 2);
+    } catch {
+      serialized = `${context ?? ''}`.trim();
+    }
+
+    if (!serialized) {
+      return '';
+    }
+
+    const responseLanguage: Record<string, string> = {
+      es: 'Spanish',
+      en: 'English',
+      fr: 'French',
+      de: 'German',
+      pt: 'Portuguese',
+      ar: 'Arabic',
+      zh: 'Chinese',
+      hi: 'Hindi',
+    };
+
+    const finalLanguage = responseLanguage[language] || responseLanguage.es;
+
+    return `Operational lot context provided by the app:
+${serialized}
+
+How to use this context:
+- Treat it as structured working data from the app, not as a user opinion.
+- Use it to detect inconsistencies in product, boxes, pallets, weight, pallet type, market or transport.
+- If the context and the image disagree, say so clearly.
+- If the context already contains a likely product, refine or challenge it only when visible evidence supports that.
+- If the context contains fallback values, mention that they are estimated and explain confidence.
+- When useful, propose the most likely correction in a short operational way.
+
+Respond always in ${finalLanguage}.`;
+  }
+
   constructor(
     private configService: ConfigService,
     @InjectRepository(AiScanResult)
@@ -3818,6 +3865,7 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
       image,
       imageMimeType = 'image/jpeg',
       imageName = 'image.jpg',
+      context,
     } = chatMessageDto;
     const systemPrompt = this.buildNaraSystemPrompt(
       this.systemPrompts[language] || this.systemPrompts.es,
@@ -3828,6 +3876,9 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
       const effectiveSystemPrompt = image
         ? `${systemPrompt}\n\n${this.buildNaraImageInstruction(language)}`
         : systemPrompt;
+      const contextualSystemPrompt = context
+        ? `${effectiveSystemPrompt}\n\n${this.buildNaraContextInstruction(context, language)}`
+        : effectiveSystemPrompt;
 
       const userContent = image
         ? [
@@ -3847,7 +3898,7 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
       const completion = await this.openai.chat.completions.create({
         model: 'gpt-4o', // más estable y actual para chat
         messages: [
-          { role: 'system', content: effectiveSystemPrompt },
+          { role: 'system', content: contextualSystemPrompt },
           { role: 'user', content: userContent },
         ],
         temperature: image ? 0.2 : 0.7,

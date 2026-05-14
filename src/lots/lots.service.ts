@@ -4,7 +4,7 @@ import { Type } from 'class-transformer';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lot, LotStatus, UnitType, QualityGrade } from '../entities/lot.entity';
-import { User } from '../entities/user.entity';
+import { User, UserRole } from '../entities/user.entity';
 import { LogService } from '../log/log.service';
 import { EventType } from '../entities/log.entity';
 
@@ -19,21 +19,24 @@ export class CreateLotDto {
   @IsString()
   caliber?: string;
 
-  @IsEnum(['extra', 'first', 'second', 'industrial'])
+  @IsEnum(QualityGrade)
   quality: QualityGrade;
 
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   price: number;
 
-  @IsEnum(['kg', 'box'])
+  @IsEnum(UnitType)
   unitType: UnitType;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   weight?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   numberOfBoxes?: number;
 
@@ -56,23 +59,26 @@ export class UpdateLotDto {
   caliber?: string;
 
   @IsOptional()
-  @IsEnum(['extra', 'first', 'second', 'industrial'])
+  @IsEnum(QualityGrade)
   quality?: QualityGrade;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   price?: number;
 
   @IsOptional()
-  @IsEnum(['kg', 'box'])
+  @IsEnum(UnitType)
   unitType?: UnitType;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   weight?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   numberOfBoxes?: number;
 
@@ -82,7 +88,7 @@ export class UpdateLotDto {
   photos?: string[];
 
   @IsOptional()
-  @IsEnum(['available', 'reserved', 'sold'])
+  @IsEnum(LotStatus)
   status?: LotStatus;
 
   @IsOptional()
@@ -118,7 +124,7 @@ export class FilterLotsDto {
   maxPrice?: number;
 
   @IsOptional()
-  @IsEnum(['available', 'reserved', 'sold'])
+  @IsEnum(LotStatus)
   status?: LotStatus;
 
   @IsOptional()
@@ -145,7 +151,40 @@ export class LotsService {
     private logService: LogService,
   ) {}
 
+  private normalizePositiveNumber(value: number | string | undefined, fallback: number): number {
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      return fallback;
+    }
+
+    return Math.floor(normalized);
+  }
+
+  private sanitizeUser<T extends Partial<User> | null | undefined>(user: T): T {
+    if (!user) {
+      return user;
+    }
+
+    const { password, ...sanitizedUser } = user as User;
+    return sanitizedUser as T;
+  }
+
+  private sanitizeLot<T extends Lot | null>(lot: T): T {
+    if (!lot) {
+      return lot;
+    }
+
+    return {
+      ...lot,
+      seller: this.sanitizeUser(lot.seller),
+    } as T;
+  }
+
   async createLot(createLotDto: CreateLotDto, user: User): Promise<Lot> {
+    if (user.role !== UserRole.SELLER && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only sellers can create lots');
+    }
+
     const lot = this.lotRepository.create({
       ...createLotDto,
       sellerId: user.id,
@@ -223,7 +262,7 @@ export class LotsService {
       throw new NotFoundException('Lot not found');
     }
 
-    return lot;
+    return this.sanitizeLot(lot);
   }
 
   async getLots(filterDto: FilterLotsDto) {
@@ -272,7 +311,7 @@ export class LotsService {
       .getManyAndCount();
 
     return {
-      lots,
+      lots: lots.map((lot) => this.sanitizeLot(lot)),
       total,
       page,
       totalPages: Math.ceil(total / limit),
@@ -280,19 +319,22 @@ export class LotsService {
   }
 
   async getMyLots(user: User, page: number = 1, limit: number = 20) {
+    const normalizedPage = this.normalizePositiveNumber(page, 1);
+    const normalizedLimit = this.normalizePositiveNumber(limit, 20);
+
     const [lots, total] = await this.lotRepository.findAndCount({
       where: { sellerId: user.id },
       relations: ['fruit', 'market'],
       order: { createdAt: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
+      skip: (normalizedPage - 1) * normalizedLimit,
+      take: normalizedLimit,
     });
 
     return {
-      lots,
+      lots: lots.map((lot) => this.sanitizeLot(lot)),
       total,
-      page,
-      totalPages: Math.ceil(total / limit),
+      page: normalizedPage,
+      totalPages: Math.ceil(total / normalizedLimit),
     };
   }
 }
