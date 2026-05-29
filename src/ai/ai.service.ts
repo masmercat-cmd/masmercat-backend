@@ -194,6 +194,34 @@ export class AiService {
     return normalized;
   }
 
+  private isUncertainProduct(value: any): boolean {
+    const normalized = this.normalizeProducto(value);
+    return (
+      !normalized ||
+      [
+        'por confirmar',
+        'desconocido',
+        'unknown',
+        'sin identificar',
+        'pendiente',
+      ].includes(normalized)
+    );
+  }
+
+  private shouldRestoreSavedScan(saved: AiScanResult | null): boolean {
+    if (!saved) {
+      return false;
+    }
+
+    if (!this.isUncertainProduct(saved.producto)) {
+      return true;
+    }
+
+    const resultado = saved.resultadoAi ?? {};
+    const savedProducto = resultado?.producto ?? resultado?.fruta ?? saved.producto;
+    return !this.isUncertainProduct(savedProducto);
+  }
+
   private inferProductoFromPackagingClues(
     parsed: any,
     producto: string,
@@ -656,15 +684,22 @@ export class AiService {
       return 0;
     }
 
-    if (!baseline.producto || !candidate.producto) {
+    const baselineProductUncertain = this.isUncertainProduct(baseline.producto);
+    const candidateProductUncertain = this.isUncertainProduct(candidate.producto);
+
+    if (candidateProductUncertain) {
       return 0;
     }
 
-    if (baseline.producto !== candidate.producto) {
+    if (!baselineProductUncertain && baseline.producto !== candidate.producto) {
       return 0;
     }
 
-    score += 6;
+    if (!baselineProductUncertain && baseline.producto === candidate.producto) {
+      score += 6;
+    } else if (baselineProductUncertain) {
+      score += 2;
+    }
 
     if (
       baseline.medidasPalet &&
@@ -771,6 +806,11 @@ export class AiService {
   ): Record<string, any> {
     const corrected = { ...result };
     const learnedPattern = this.buildPatternFeatures(learned);
+
+    if (this.isUncertainProduct(corrected.producto) && !this.isUncertainProduct(learned.producto)) {
+      corrected.producto = this.normalizeProducto(learned.producto);
+      corrected.categoria = corrected.categoria ?? learned.categoria ?? 'fruta';
+    }
 
     if (learnedPattern.cajas > 0) {
       corrected.cajas_estimadas = learnedPattern.cajas;
@@ -3164,10 +3204,6 @@ ${JSON.stringify(parsed)}`;
     parsed: any,
     requestedScanMode: 'single' | 'multi',
   ): boolean {
-    if (requestedScanMode !== 'multi') {
-      return false;
-    }
-
     const producto = `${parsed?.producto ?? parsed?.fruta ?? ''}`.trim().toLowerCase();
     const textHints = [
       parsed?.texto_visible,
@@ -3293,6 +3329,52 @@ ${JSON.stringify(parsed)}`;
       texto_visible: rescue?.texto_visible ?? parsed?.texto_visible,
       variedad_visible: rescue?.variedad_visible ?? parsed?.variedad_visible,
       label_ocr_rescue: true,
+    };
+  }
+
+  private async rescueVisualProductGuess(
+    img: string,
+    parsed: any,
+  ): Promise<any> {
+    const rescue = await this.requestVisionJson(
+      `data:image/jpeg;base64,${img}`,
+      [
+        'Analyze this palletized fruit image.',
+        '',
+        'Emergency visual product identification pass.',
+        'Focus on the visible fruit itself when labels are weak or unreadable.',
+        'Use fruit shape, rind/skin pattern, color, size, packing style, and repeated top-layer appearance.',
+        '',
+        'Return ONLY valid JSON:',
+        '{',
+        '  "producto": "melon/sandia/manzana/nectarina/melocoton/paraguayo/granada/kiwi/etc",',
+        '  "categoria": "fruta/verdura/hongo",',
+        '  "confianza_producto": "alta/media/baja",',
+        '  "justificacion_visual": "very short reason based on visible appearance"',
+        '}',
+        '',
+        'Rules:',
+        '- If the visible top layer shows many round beige or netted melons in produce boxes, prefer "melon".',
+        '- If the visible fruit looks striped or dark-green and much larger, prefer "sandia".',
+        '- If the fruit is small smooth stone fruit, distinguish melocoton, nectarina and paraguayo carefully.',
+        '- If not confident, keep producto empty instead of inventing.',
+        '',
+        'Current parsed context:',
+        JSON.stringify(parsed),
+      ].join('\n'),
+      'OpenAI visual product guess rescue',
+      120,
+    );
+
+    const rescuedProduct =
+      this.normalizeProducto(rescue?.producto ?? '') || parsed?.producto;
+
+    return {
+      ...parsed,
+      ...rescue,
+      producto: rescuedProduct,
+      categoria: rescue?.categoria ?? parsed?.categoria,
+      visual_product_rescue: true,
     };
   }
 
@@ -3573,10 +3655,20 @@ ${JSON.stringify(parsed)}`;
     const imagePath =
       `${payload?.image_path ?? payload?.imagePath ?? payload?.resultado_ai?.image_path ?? payload?.result?.image_path ?? ''}`.trim() ||
       null;
-    const existing = await this.aiScanResultRepository.findOne({
-      where: { userId },
-      order: { updatedAt: 'DESC' },
-    });
+    const where: Array<Record<string, any>> = [];
+    if (imageHash) {
+      where.push({ userId, imageHash });
+    }
+    if (imagePath) {
+      where.push({ userId, imagePath });
+    }
+    const existing =
+      where.length > 0
+        ? await this.aiScanResultRepository.findOne({
+            where,
+            order: { updatedAt: 'DESC' },
+          })
+        : null;
 
     const entity = existing ?? this.aiScanResultRepository.create({ userId });
     entity.imagePath = imagePath;
@@ -4062,6 +4154,24 @@ Rules:
     let img = (base64Image || '').trim();
     img = img.replace(/^data:image\/\w+;base64,/, '');
     const imageHash = this.buildImageHash(img);
+    const cached = this.getCachedImageAnalysis(imageHash);
+    if (
+      cached &&
+      !this.isUncertainProduct(cached?.producto ?? cached?.fruta)
+    ) {
+      cached.image_hash = imageHash;
+      cached.image_path = options?.imagePath ?? cached.image_path ?? null;
+      return cached;
+    }
+
+    const saved = await this.findSavedCorrection(imageHash, options?.imagePath);
+    if (this.shouldRestoreSavedScan(saved)) {
+      const restored = this.mapSavedScanResult(saved);
+      restored.image_hash = imageHash;
+      restored.image_path = options?.imagePath ?? restored.image_path ?? null;
+      this.cacheImageAnalysis(imageHash, restored);
+      return restored;
+    }
 
     const lang = this.resolveVisionPromptLanguage(language || 'es');
     const requestedScanMode =
@@ -4126,18 +4236,24 @@ Rules:
       if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
         parsed = await this.rescueLabelOcrProduct(img, parsed);
       }
+      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueVisualProductGuess(img, parsed);
+      }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
       parsed.requested_scan_mode = requestedScanMode;
 
       const finalized = this.finalizeVisionResult(parsed);
+      const learned = await this.findPatternCorrection(finalized, imageHash);
+      const correctedFinalized =
+        learned != null ? this.applyPatternCorrection(finalized, learned) : finalized;
 
-      finalized.image_hash = imageHash;
-      finalized.image_path = options?.imagePath ?? null;
-      this.cacheImageAnalysis(imageHash, finalized);
-      this.logVisionSnapshot('Final pallet result attempt A', finalized);
-      return finalized;
+      correctedFinalized.image_hash = imageHash;
+      correctedFinalized.image_path = options?.imagePath ?? null;
+      this.cacheImageAnalysis(imageHash, correctedFinalized);
+      this.logVisionSnapshot('Final pallet result attempt A', correctedFinalized);
+      return correctedFinalized;
     } catch (error: any) {
       console.error('Vision attempt A (data URL) error:', error?.message || error);
       console.error('details:', error?.response?.data || error?.response || error);
@@ -4197,18 +4313,24 @@ Rules:
       if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
         parsed = await this.rescueLabelOcrProduct(img, parsed);
       }
+      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
+        parsed = await this.rescueVisualProductGuess(img, parsed);
+      }
       parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
       parsed.requested_scan_mode = requestedScanMode;
 
       const finalized = this.finalizeVisionResult(parsed);
+      const learned = await this.findPatternCorrection(finalized, imageHash);
+      const correctedFinalized =
+        learned != null ? this.applyPatternCorrection(finalized, learned) : finalized;
 
-      finalized.image_hash = imageHash;
-      finalized.image_path = options?.imagePath ?? null;
-      this.cacheImageAnalysis(imageHash, finalized);
-      this.logVisionSnapshot('Final pallet result attempt B', finalized);
-      return finalized;
+      correctedFinalized.image_hash = imageHash;
+      correctedFinalized.image_path = options?.imagePath ?? null;
+      this.cacheImageAnalysis(imageHash, correctedFinalized);
+      this.logVisionSnapshot('Final pallet result attempt B', correctedFinalized);
+      return correctedFinalized;
     } catch (error: any) {
       console.error('Vision attempt B (raw base64) error:', error?.message || error);
       console.error('details:', error?.response?.data || error?.response || error);

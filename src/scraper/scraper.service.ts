@@ -1039,6 +1039,8 @@ export class ScraperService {
       skipped: 0,
       notes: [],
     };
+    const entriesByCountry = new Map<string, ReferencePriceInput[]>();
+    const clearedCountries = new Set<string>();
 
     for (const fruit of fruits) {
       const euProduct = this.resolveEuProductName(fruit.nameEs);
@@ -1090,10 +1092,20 @@ export class ScraperService {
         }
 
         if (pendingUpserts.length > 0) {
-          await this.replaceReferencePricesForSource('EU AgriData', countryCode, pendingUpserts);
-          saved += pendingUpserts.length;
+          const existing = entriesByCountry.get(countryCode) ?? [];
+          existing.push(...pendingUpserts);
+          entriesByCountry.set(countryCode, existing);
         }
       }
+    }
+
+    for (const [countryCode, entries] of entriesByCountry.entries()) {
+      if (entries.length === 0 || clearedCountries.has(countryCode)) {
+        continue;
+      }
+      await this.replaceReferencePricesForSource('EU AgriData', countryCode, entries);
+      saved += entries.length;
+      clearedCountries.add(countryCode);
     }
 
     diagnostics.attempted = attempted;
