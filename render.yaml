@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: masmercat-backend
+    runtime: node
+    rootDir: backend
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /ai/debug-version
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: TYPEORM_SYNCHRONIZE
+        value: "false"
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRATION
+        value: 7d
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: ADMIN_URL
+        sync: false
+      - key: ML_VISION_ENDPOINT
+        sync: false
+      - key: ML_VISION_API_KEY
+        sync: false
+      - key: ML_VISION_TIMEOUT_MS
+        value: "8000"
+      - key: ML_VISION_MIN_CONFIDENCE
+        value: "0.45"
+      - key: ML_VISION_PREFER_DETECTOR
+        value: "true"

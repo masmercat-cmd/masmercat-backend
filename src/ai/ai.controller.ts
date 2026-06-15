@@ -1,6 +1,11 @@
 import { Controller, Post, Body, Get, Req, UseGuards, Delete, Query } from '@nestjs/common';
 import type { Request } from 'express';
-import { AiService, ChatMessageDto, TransportTariffDto } from './ai.service';
+import {
+  AiService,
+  ChatMessageDto,
+  ScanAndWeighDto,
+  TransportTariffDto,
+} from './ai.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('ai')
@@ -31,7 +36,16 @@ export class AiController {
     forced.scan_mode = 'multi';
     forced.requested_scan_mode = 'multi';
     forced.scene_pipeline = `${forced.scene_pipeline ?? ''}`.trim() || 'multi';
-    const effectivePallets = Math.max(pallets, 3);
+    const effectivePallets = Math.max(
+      pallets,
+      this.toNumber(forced?.numero_palets_visibles_base),
+      this.toNumber(forced?.bloques_palets_visibles),
+      this.toNumber(forced?.bases_independientes_visibles),
+    );
+    if (effectivePallets <= 0) {
+      return forced;
+    }
+
     forced.numero_palets = effectivePallets;
     forced.pallet_count = effectivePallets;
     forced.numero_palets_visibles_base = Math.max(
@@ -68,7 +82,7 @@ export class AiController {
       this.toNumber(forced?.cajas_estimadas),
       this.toNumber(forced?.cajas_aprox),
     );
-    const forcedBoxes = Math.max(existingBoxes, effectivePallets * 72);
+    const forcedBoxes = existingBoxes;
     forced.cajas_estimadas = forcedBoxes;
     forced.cajas_aprox = forcedBoxes;
 
@@ -76,7 +90,7 @@ export class AiController {
     const grossKg = Math.max(
       this.toNumber(forced?.peso_bruto_kg),
       this.toNumber(forced?.peso_estimado_kg),
-      forcedBoxes * 7.5 + taraKg,
+      forcedBoxes > 0 ? forcedBoxes * 7.5 + taraKg : 0,
     );
     forced.tara_kg = taraKg;
     forced.peso_bruto_kg = grossKg;
@@ -251,6 +265,73 @@ if (!image) {
   return { ok: false, error: err?.message || 'Error interno analizando imagen' };
 }
 }
+
+  @Post('scan-and-weigh')
+  async scanAndWeigh(@Req() req: Request, @Body() body: any) {
+    console.log('ENTRO A /ai/scan-and-weigh');
+    console.log('Content-Type:', req.headers['content-type']);
+
+    let payload: any = body;
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch {}
+    }
+    const normalized = payload?.data ?? payload ?? {};
+
+    let image =
+      normalized?.image ??
+      normalized?.imageBase64 ??
+      normalized?.base64 ??
+      normalized?.photo ??
+      normalized?.photoBase64 ??
+      normalized?.file;
+
+    if (image && typeof image === 'object') {
+      image = image.base64 ?? image.data ?? image.uri ?? null;
+    }
+
+    if (!image) {
+      return { ok: false, error: 'Falta image en el body' };
+    }
+
+    const dto: ScanAndWeighDto = {
+      image,
+      imageMimeType:
+        normalized?.imageMimeType ??
+        normalized?.image_mime_type ??
+        normalized?.mime_type ??
+        normalized?.mimeType,
+      imageName:
+        normalized?.imageName ??
+        normalized?.image_name ??
+        normalized?.fileName ??
+        normalized?.filename,
+      imagePath:
+        normalized?.imagePath ??
+        normalized?.image_path ??
+        normalized?.path,
+      language: normalized?.language ?? 'es',
+      fastMode: normalized?.fastMode === true || normalized?.fast_mode === true,
+      scanMode:
+        normalized?.scanMode === 'multi' || normalized?.scan_mode === 'multi'
+          ? 'multi'
+          : 'single',
+      context:
+        normalized?.context && typeof normalized.context === 'object'
+          ? normalized.context
+          : {},
+    };
+
+    try {
+      return await this.aiService.scanAndWeigh(dto);
+    } catch (err: any) {
+      console.log('ERROR scanAndWeigh:', err?.message || err);
+      console.log('ERROR details:', err?.response?.data || err?.response || err);
+      return {
+        ok: false,
+        error: err?.message || 'Error interno en scan-and-weigh',
+      };
+    }
+  }
 
   @Post('analyze-transport-tariff')
   async analyzeTransportTariff(@Req() req: Request, @Body() body: any) {

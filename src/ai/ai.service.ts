@@ -27,6 +27,17 @@ export class TransportTariffDto {
   palletType?: string;
 }
 
+export class ScanAndWeighDto {
+  image: string;
+  imageMimeType?: string;
+  imageName?: string;
+  imagePath?: string;
+  language?: string;
+  fastMode?: boolean;
+  scanMode?: 'single' | 'multi';
+  context?: Record<string, any>;
+}
+
 @Injectable()
 export class AiService {
   private openai: OpenAI;
@@ -95,6 +106,277 @@ export class AiService {
     return Math.min(max, Math.max(min, value));
   }
 
+  private hasMeaningfulValue(value: any): boolean {
+    const normalized = `${value ?? ''}`.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return ![
+      'por confirmar',
+      'pendiente',
+      'unknown',
+      'desconocido',
+      'n/a',
+      'null',
+      'undefined',
+    ].includes(normalized);
+  }
+
+  private buildConfidenceBand(score: number): 'high' | 'medium' | 'low' {
+    if (score >= 0.8) {
+      return 'high';
+    }
+    if (score >= 0.55) {
+      return 'medium';
+    }
+    return 'low';
+  }
+
+  private roundMetric(value: number | null | undefined, digits: number = 2): number | null {
+    if (!Number.isFinite(value as number)) {
+      return null;
+    }
+
+    const factor = 10 ** digits;
+    return Math.round((value as number) * factor) / factor;
+  }
+
+  private summarizeScanHeadline(
+    productLabel: string,
+    palletCount: number | null,
+    boxCount: number | null,
+  ): string {
+    const palletsText =
+      palletCount != null ? `${palletCount} palet${palletCount === 1 ? '' : 's'}` : 'palets por revisar';
+    const boxesText =
+      boxCount != null ? `${boxCount} cajas` : 'cajas por revisar';
+    const productText = this.hasMeaningfulValue(productLabel) ? productLabel : 'producto por confirmar';
+    return `Veo ${palletsText} y ${boxesText} de ${productText}`;
+  }
+
+  async scanAndWeigh(scanDto: ScanAndWeighDto): Promise<any> {
+    const startedAt = Date.now();
+    const language = scanDto?.language || 'es';
+    const context =
+      scanDto?.context && typeof scanDto.context === 'object' ? scanDto.context : {};
+    const requestedScanMode =
+      scanDto?.scanMode === 'multi' ? 'multi' : 'single';
+    const imageHash = this.buildImageHash((scanDto?.image || '').trim());
+    let analysisError: string | null = null;
+    let rawResult: any;
+
+    try {
+      rawResult = await this.analyzeFruitImage(scanDto.image, language, {
+        imagePath: scanDto.imagePath,
+        fastMode: scanDto.fastMode === true,
+        scanMode: requestedScanMode,
+      });
+    } catch (error: any) {
+      analysisError = error?.message || 'AI analysis unavailable';
+      rawResult = {
+        image_hash: imageHash,
+        image_path: scanDto.imagePath ?? null,
+        analysis_detail: scanDto.fastMode ? 'fast' : 'full',
+        scan_mode: requestedScanMode,
+        requested_scan_mode: requestedScanMode,
+      };
+    }
+
+    const contextProduct =
+      context?.expectedProduct ??
+      context?.product ??
+      context?.productName ??
+      null;
+    const rawProduct =
+      rawResult?.producto ??
+      rawResult?.fruta ??
+      contextProduct ??
+      null;
+    const productValue = this.hasMeaningfulValue(rawProduct)
+      ? this.normalizeProducto(rawProduct)
+      : this.hasMeaningfulValue(contextProduct)
+        ? this.normalizeProducto(contextProduct)
+        : null;
+    const productLabel = this.hasMeaningfulValue(rawProduct)
+      ? `${rawProduct}`.trim()
+      : this.hasMeaningfulValue(contextProduct)
+        ? `${contextProduct}`.trim()
+        : 'Producto por confirmar';
+
+    const palletsValueRaw = Math.max(
+      this.toNumber(rawResult?.numero_palets),
+      this.toNumber(rawResult?.pallet_count),
+      this.toNumber(context?.expectedPallets),
+    );
+    const boxesValueRaw = Math.max(
+      this.toNumber(rawResult?.cajas_estimadas),
+      this.toNumber(rawResult?.cajas_aprox),
+      this.toNumber(context?.expectedBoxes),
+    );
+    const grossKgRaw = Math.max(
+      this.toNumber(rawResult?.peso_bruto_kg),
+      this.toNumber(context?.grossWeightKg),
+    );
+    const tareKgRaw = Math.max(
+      this.toNumber(rawResult?.tara_kg),
+      this.toNumber(context?.tareHintKg),
+    );
+    const netKgCandidate = Math.max(
+      this.toNumber(rawResult?.peso_neto_kg),
+      this.toNumber(context?.netWeightKg),
+    );
+    const netKgRaw =
+      netKgCandidate > 0
+        ? netKgCandidate
+        : grossKgRaw > 0
+          ? Math.max(grossKgRaw - tareKgRaw, 0)
+          : 0;
+
+    const detectorConfidence = this.clamp(
+      this.toNumber(rawResult?.detector_confidence),
+      0,
+      1,
+    );
+    const productConfidence = this.hasMeaningfulValue(rawResult?.producto ?? rawResult?.fruta)
+      ? Math.max(detectorConfidence, 0.78)
+      : this.hasMeaningfulValue(contextProduct)
+        ? 0.46
+        : 0.18;
+    const palletsConfidence =
+      palletsValueRaw > 0
+        ? Math.max(detectorConfidence, rawResult?.scan_mode === 'multi' ? 0.82 : 0.74)
+        : 0.2;
+    const boxesConfidence =
+      boxesValueRaw > 0
+        ? Math.max(detectorConfidence, this.toNumber(rawResult?.columnas_visibles) > 0 ? 0.72 : 0.5)
+        : 0.2;
+    const weightConfidence =
+      netKgRaw > 0
+        ? rawResult?.peso_bruto_kg || rawResult?.peso_neto_kg
+          ? 0.74
+          : context?.grossWeightKg
+            ? 0.52
+            : 0.35
+        : 0.12;
+
+    const warnings: string[] = [];
+    if (analysisError) {
+      warnings.push(`No se pudo completar el analisis IA: ${analysisError}`);
+    }
+    if (!rawResult?.detector_provider) {
+      warnings.push('Resultado sin detector visual externo; se ha usado la canalizacion principal de IA.');
+    }
+    if (!this.hasMeaningfulValue(rawResult?.producto ?? rawResult?.fruta)) {
+      warnings.push('Producto pendiente de confirmacion visual.');
+    }
+    if (boxesConfidence < 0.6) {
+      warnings.push('Conviene revisar manualmente el conteo de cajas.');
+    }
+    if (weightConfidence < 0.6) {
+      warnings.push('El peso es una estimacion operativa y no una pesada confirmada.');
+    }
+
+    const averageConfidence =
+      (productConfidence + palletsConfidence + boxesConfidence + weightConfidence) / 4;
+    const confidenceBand = this.buildConfidenceBand(averageConfidence);
+    const needsReview = confidenceBand !== 'high' || warnings.length > 0;
+
+    const suggestedCorrections: Array<Record<string, any>> = [];
+    if (boxesConfidence < 0.7 && boxesValueRaw > 0) {
+      suggestedCorrections.push({
+        field: 'boxes',
+        action: 'review',
+        value: boxesValueRaw,
+        reason: 'Si hay filas laterales no visibles, el conteo puede variar.',
+      });
+    }
+    if (!this.hasMeaningfulValue(rawResult?.producto ?? rawResult?.fruta)) {
+      suggestedCorrections.push({
+        field: 'product',
+        action: 'review',
+        value: productValue,
+        reason: 'El producto sale por contexto o con baja certeza visual.',
+      });
+    }
+    if (weightConfidence < 0.6) {
+      suggestedCorrections.push({
+        field: 'weight',
+        action: 'review',
+        value: netKgRaw > 0 ? this.roundMetric(netKgRaw, 0) : null,
+        reason: 'Si tienes peso real de bascula, conviene sustituir esta estimacion.',
+      });
+    }
+
+    return {
+      ok: true,
+      scanId: rawResult?.image_hash ?? imageHash,
+      result: {
+        product: {
+          value: productValue,
+          label: productLabel,
+          confidence: this.roundMetric(productConfidence, 4),
+          source: this.hasMeaningfulValue(rawResult?.producto ?? rawResult?.fruta)
+            ? this.hasMeaningfulValue(contextProduct)
+              ? 'vision+context'
+              : 'vision'
+            : this.hasMeaningfulValue(contextProduct)
+              ? 'context'
+              : 'unknown',
+        },
+        pallets: {
+          value: palletsValueRaw > 0 ? Math.round(palletsValueRaw) : null,
+          confidence: this.roundMetric(palletsConfidence, 4),
+          source: rawResult?.detector_provider ? 'vision' : 'heuristic',
+        },
+        boxes: {
+          value: boxesValueRaw > 0 ? Math.round(boxesValueRaw) : null,
+          confidence: this.roundMetric(boxesConfidence, 4),
+          source: rawResult?.detector_provider ? 'vision+heuristic' : 'heuristic',
+        },
+        weight: {
+          grossKg: grossKgRaw > 0 ? this.roundMetric(grossKgRaw, 0) : null,
+          tareKg: tareKgRaw > 0 ? this.roundMetric(tareKgRaw, 0) : null,
+          netKg: netKgRaw > 0 ? this.roundMetric(netKgRaw, 0) : null,
+          confidence: this.roundMetric(weightConfidence, 4),
+          source:
+            rawResult?.peso_bruto_kg || rawResult?.peso_neto_kg
+              ? 'vision+heuristic'
+              : context?.grossWeightKg
+                ? 'context+heuristic'
+                : 'heuristic',
+        },
+        quality: {
+          value: this.hasMeaningfulValue(rawResult?.calidad) ? `${rawResult.calidad}`.trim() : null,
+          confidence: this.hasMeaningfulValue(rawResult?.calidad) ? 0.42 : 0,
+          source: this.hasMeaningfulValue(rawResult?.calidad) ? 'vision' : 'unknown',
+        },
+      },
+      summary: {
+        headline: this.summarizeScanHeadline(
+          productLabel,
+          palletsValueRaw > 0 ? Math.round(palletsValueRaw) : null,
+          boxesValueRaw > 0 ? Math.round(boxesValueRaw) : null,
+        ),
+        confidence: confidenceBand,
+        needsReview,
+      },
+      warnings,
+      suggestedCorrections,
+      debug: {
+        visionProvider: rawResult?.detector_provider ?? null,
+        visionUsed: Boolean(rawResult?.detector_provider),
+        fallbackUsed: !rawResult?.detector_provider,
+        analysisDetail: rawResult?.analysis_detail ?? (scanDto?.fastMode ? 'fast' : 'full'),
+        scanMode: rawResult?.scan_mode ?? requestedScanMode,
+        timingsMs: {
+          total: Math.max(1, Date.now() - startedAt),
+        },
+        raw: rawResult,
+      },
+    };
+  }
+
   private normalizeEnvase(value: any): string {
     return `${value ?? ''}`.trim().toLowerCase();
   }
@@ -128,6 +410,10 @@ export class AiService {
       starking: 'manzana',
       melon: 'melon',
       melones: 'melon',
+      mamey: 'zapote',
+      mameyes: 'zapote',
+      sapote: 'zapote',
+      sapotes: 'zapote',
       watermelon: 'sandia',
       watermelons: 'sandia',
       sandias: 'sandia',
@@ -188,6 +474,10 @@ export class AiService {
     }
 
     if (normalized.includes('zapote')) {
+      return 'zapote';
+    }
+
+    if (normalized.includes('mamey') || normalized.includes('sapote')) {
       return 'zapote';
     }
 
@@ -1489,58 +1779,6 @@ export class AiService {
       totalBoxes,
     );
 
-    if (!warehouseLike && explicitPallets <= 1) {
-      const forcedPallets = 3;
-      const forcedRows = Math.max(this.toNumber(parsed?.filas_visibles), 8);
-      const forcedColumns = Math.max(this.toNumber(parsed?.columnas_visibles), 6);
-      const forcedDepth = Math.max(this.toNumber(parsed?.profundidad_estimada), 3);
-      const forcedBoxes = Math.max(totalBoxes, forcedPallets * forcedRows * 3);
-
-      parsed.envase = 'palet con cajas';
-      parsed.hay_palet = true;
-      parsed.hay_cajas = true;
-      parsed.numero_palets = forcedPallets;
-      parsed.pallet_count = forcedPallets;
-      parsed.numero_palets_visibles_base = Math.max(
-        this.toNumber(parsed?.numero_palets_visibles_base),
-        forcedPallets,
-      );
-      parsed.bases_independientes_visibles = Math.max(
-        this.toNumber(parsed?.bases_independientes_visibles),
-        forcedPallets,
-      );
-      parsed.bloques_palets_visibles = Math.max(
-        this.toNumber(parsed?.bloques_palets_visibles),
-        forcedPallets,
-      );
-      parsed.columnas_palets_visibles = Math.max(
-        this.toNumber(parsed?.columnas_palets_visibles),
-        forcedPallets,
-      );
-      parsed.filas_palets_visibles = Math.max(
-        this.toNumber(parsed?.filas_palets_visibles),
-        1,
-      );
-      parsed.columnas_visibles = forcedColumns;
-      parsed.filas_visibles = forcedRows;
-      parsed.profundidad_estimada = forcedDepth;
-      parsed.cajas_superiores = Math.max(
-        this.toNumber(parsed?.cajas_superiores),
-        3,
-      );
-      parsed.cajas_por_capa = Math.max(
-        this.toNumber(parsed?.cajas_por_capa),
-        forcedPallets * 3,
-      );
-      parsed.capas_estimadas = Math.max(
-        this.toNumber(parsed?.capas_estimadas),
-        forcedRows,
-      );
-      parsed.cajas_estimadas = forcedBoxes;
-      parsed.cajas_aprox = forcedBoxes;
-      parsed.front_multi_hard_fallback = true;
-    }
-
     return parsed;
   }
 
@@ -2219,60 +2457,41 @@ export class AiService {
     let boxes = looksLoose ? 0 : this.estimateBoxes(parsed, envase);
     const isPalot = envase.includes('palot');
     let palletCount = this.inferPalletCount(parsed, envase);
-    if (this.shouldForceAggressiveFrontMultiThreePallets(parsed, envase)) {
-      palletCount = 3;
-      parsed.numero_palets = 3;
-      parsed.pallet_count = 3;
-      parsed.numero_palets_visibles_base = Math.max(
-        this.toNumber(parsed?.numero_palets_visibles_base),
-        3,
-      );
-      parsed.bases_independientes_visibles = Math.max(
-        this.toNumber(parsed?.bases_independientes_visibles),
-        3,
-      );
-      parsed.bloques_palets_visibles = Math.max(
-        this.toNumber(parsed?.bloques_palets_visibles),
-        3,
-      );
-      parsed.columnas_palets_visibles = Math.max(
-        this.toNumber(parsed?.columnas_palets_visibles),
-        3,
-      );
-      parsed.filas_palets_visibles = Math.max(
-        this.toNumber(parsed?.filas_palets_visibles),
-        1,
-      );
-      boxes = Math.max(boxes, this.toNumber(parsed?.cajas_estimadas), this.toNumber(parsed?.cajas_aprox), 72);
-      parsed.cajas_estimadas = boxes;
-      parsed.cajas_aprox = boxes;
-      parsed.front_multi_aggressive_three_pallets = true;
-    }
     if (
       `${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi' &&
       palletCount <= 1
     ) {
-      palletCount = 3;
+      palletCount = Math.max(
+        palletCount,
+        this.toNumber(parsed?.numero_palets_visibles_base),
+        this.toNumber(parsed?.bloques_palets_visibles),
+        this.toNumber(parsed?.bases_independientes_visibles),
+      );
+    }
+    if (
+      `${parsed?.scan_mode ?? ''}`.trim().toLowerCase() === 'multi' &&
+      palletCount >= 2
+    ) {
       parsed.envase = 'palet con cajas';
       parsed.hay_palet = true;
       parsed.hay_cajas = true;
-      parsed.numero_palets = 3;
-      parsed.pallet_count = 3;
+      parsed.numero_palets = palletCount;
+      parsed.pallet_count = palletCount;
       parsed.numero_palets_visibles_base = Math.max(
         this.toNumber(parsed?.numero_palets_visibles_base),
-        3,
+        palletCount,
       );
       parsed.bases_independientes_visibles = Math.max(
         this.toNumber(parsed?.bases_independientes_visibles),
-        3,
+        palletCount,
       );
       parsed.bloques_palets_visibles = Math.max(
         this.toNumber(parsed?.bloques_palets_visibles),
-        3,
+        palletCount,
       );
       parsed.columnas_palets_visibles = Math.max(
         this.toNumber(parsed?.columnas_palets_visibles),
-        3,
+        palletCount,
       );
       parsed.filas_palets_visibles = Math.max(
         this.toNumber(parsed?.filas_palets_visibles),
@@ -2282,7 +2501,6 @@ export class AiService {
         boxes,
         this.toNumber(parsed?.cajas_estimadas),
         this.toNumber(parsed?.cajas_aprox),
-        72,
       );
       parsed.cajas_estimadas = boxes;
       parsed.cajas_aprox = boxes;
@@ -3593,12 +3811,14 @@ ${JSON.stringify(parsed)}`;
       return parsed;
     }
 
-    const inferredPallets =
-      visibleColumns >= 6
-        ? 3
-        : visibleColumns >= 4
-          ? 2
-          : 1;
+    const inferredPallets = Math.max(
+      currentPallets,
+      this.toNumber(parsed?.numero_palets_visibles_base),
+      this.toNumber(parsed?.bases_independientes_visibles),
+      this.toNumber(parsed?.bloques_palets_visibles),
+      this.toNumber(parsed?.columnas_palets_visibles) *
+        this.toNumber(parsed?.filas_palets_visibles),
+    );
 
     if (inferredPallets <= 1) {
       return parsed;
@@ -4160,8 +4380,10 @@ Rules:
     img = img.replace(/^data:image\/\w+;base64,/, '');
     const imageHash = this.buildImageHash(img);
     const cached = this.getCachedImageAnalysis(imageHash);
+    const wantsFastMode = options?.fastMode === true;
     if (
       cached &&
+      (wantsFastMode || cached?.analysis_detail !== 'fast') &&
       !this.isUncertainProduct(cached?.producto ?? cached?.fruta)
     ) {
       cached.image_hash = imageHash;
@@ -4181,7 +4403,7 @@ Rules:
     const lang = this.resolveVisionPromptLanguage(language || 'es');
     const requestedScanMode =
       options?.scanMode === 'multi' ? 'multi' : 'single';
-    const detectorVision = await this.requestMlVisionDetection(img);
+    const detectorVisionPromise = this.requestMlVisionDetection(img);
 
     console.log('analyzeFruitImage staged lang:', lang);
     console.log('analyzeFruitImage base64 length:', img.length);
@@ -4207,44 +4429,16 @@ Rules:
         requestedScanMode,
         options?.fastMode,
       );
+      parsed = await this.runVisionPostProcessing(
+        img,
+        parsed,
+        lang,
+        requestedScanMode,
+        options?.fastMode,
+      );
       console.timeEnd('openai_attempt_A');
       console.log('OpenAI responded (attempt A)');
-
-      if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
-        parsed = await this.refinePalletEstimate(img, parsed, lang);
-      }
-      if (
-        (requestedScanMode === 'multi' || !(options?.fastMode == true)) &&
-        this.shouldRunZoneRecount(parsed)
-      ) {
-        parsed = await this.zoneRecountPallets(img, parsed);
-      }
-      const needsWarehouseRescueA =
-        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode);
-      if (
-        needsWarehouseRescueA &&
-        (requestedScanMode === 'multi' ||
-          !(options?.fastMode == true) ||
-          this.normalizeEnvase(parsed?.envase).includes('sin caja'))
-      ) {
-        parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
-      }
-      if (this.shouldRunFrontMultiPalletRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
-      }
-      if (this.shouldRunFrontMultiEnrichment(parsed, requestedScanMode)) {
-        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
-      }
-      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueProductIdentification(img, parsed);
-      }
-      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueLabelOcrProduct(img, parsed);
-      }
-      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueVisualProductGuess(img, parsed);
-      }
-      parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
+      const detectorVision = await detectorVisionPromise;
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
       parsed.requested_scan_mode = requestedScanMode;
@@ -4256,7 +4450,10 @@ Rules:
 
       correctedFinalized.image_hash = imageHash;
       correctedFinalized.image_path = options?.imagePath ?? null;
-      this.cacheImageAnalysis(imageHash, correctedFinalized);
+      correctedFinalized.analysis_detail = wantsFastMode ? 'fast' : 'full';
+      if (!wantsFastMode) {
+        this.cacheImageAnalysis(imageHash, correctedFinalized);
+      }
       this.logVisionSnapshot('Final pallet result attempt A', correctedFinalized);
       return correctedFinalized;
     } catch (error: any) {
@@ -4284,44 +4481,16 @@ Rules:
         requestedScanMode,
         options?.fastMode,
       );
+      parsed = await this.runVisionPostProcessing(
+        img,
+        parsed,
+        lang,
+        requestedScanMode,
+        options?.fastMode,
+      );
       console.timeEnd('openai_attempt_B');
       console.log('OpenAI responded (attempt B)');
-
-      if (!(options?.fastMode == true) && this.shouldRefinePalletEstimate(parsed)) {
-        parsed = await this.refinePalletEstimate(img, parsed, lang);
-      }
-      if (
-        (requestedScanMode === 'multi' || !(options?.fastMode == true)) &&
-        this.shouldRunZoneRecount(parsed)
-      ) {
-        parsed = await this.zoneRecountPallets(img, parsed);
-      }
-      const needsWarehouseRescueB =
-        this.shouldRunExplicitMultiWarehouseRescue(parsed, requestedScanMode);
-      if (
-        needsWarehouseRescueB &&
-        (requestedScanMode === 'multi' ||
-          !(options?.fastMode == true) ||
-          this.normalizeEnvase(parsed?.envase).includes('sin caja'))
-      ) {
-        parsed = await this.rescueExplicitMultiWarehouseCount(img, parsed);
-      }
-      if (this.shouldRunFrontMultiPalletRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
-      }
-      if (this.shouldRunFrontMultiEnrichment(parsed, requestedScanMode)) {
-        parsed = await this.rescueFrontMultiPalletCount(img, parsed);
-      }
-      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueProductIdentification(img, parsed);
-      }
-      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueLabelOcrProduct(img, parsed);
-      }
-      if (this.shouldRunProductIdentificationRescue(parsed, requestedScanMode)) {
-        parsed = await this.rescueVisualProductGuess(img, parsed);
-      }
-      parsed = this.applyEmergencyWarehouseFallback(parsed, requestedScanMode);
+      const detectorVision = await detectorVisionPromise;
       parsed = this.mergeMlVisionDetection(parsed, detectorVision, requestedScanMode);
       parsed.scan_mode = requestedScanMode;
       parsed.requested_scan_mode = requestedScanMode;
@@ -4333,7 +4502,10 @@ Rules:
 
       correctedFinalized.image_hash = imageHash;
       correctedFinalized.image_path = options?.imagePath ?? null;
-      this.cacheImageAnalysis(imageHash, correctedFinalized);
+      correctedFinalized.analysis_detail = wantsFastMode ? 'fast' : 'full';
+      if (!wantsFastMode) {
+        this.cacheImageAnalysis(imageHash, correctedFinalized);
+      }
       this.logVisionSnapshot('Final pallet result attempt B', correctedFinalized);
       return correctedFinalized;
     } catch (error: any) {
@@ -4458,6 +4630,58 @@ Rules:
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private async runVisionPostProcessing(
+    img: string,
+    parsed: any,
+    lang: 'es' | 'en' | 'fr' | 'de' | 'pt' | 'ar' | 'zh' | 'hi',
+    requestedScanMode: 'single' | 'multi',
+    fastMode?: boolean,
+  ): Promise<any> {
+    let refined = parsed;
+
+    if (!(fastMode === true) && this.shouldRefinePalletEstimate(refined)) {
+      refined = await this.refinePalletEstimate(img, refined, lang);
+    }
+    if (
+      (requestedScanMode === 'multi' || !(fastMode === true)) &&
+      this.shouldRunZoneRecount(refined)
+    ) {
+      refined = await this.zoneRecountPallets(img, refined);
+    }
+
+    const needsWarehouseRescue = this.shouldRunExplicitMultiWarehouseRescue(
+      refined,
+      requestedScanMode,
+    );
+    if (
+      needsWarehouseRescue &&
+      (requestedScanMode === 'multi' ||
+        !(fastMode === true) ||
+        this.normalizeEnvase(refined?.envase).includes('sin caja'))
+    ) {
+      refined = await this.rescueExplicitMultiWarehouseCount(img, refined);
+    }
+
+    if (
+      this.shouldRunFrontMultiPalletRescue(refined, requestedScanMode) ||
+      this.shouldRunFrontMultiEnrichment(refined, requestedScanMode)
+    ) {
+      refined = await this.rescueFrontMultiPalletCount(img, refined);
+    }
+
+    if (this.shouldRunProductIdentificationRescue(refined, requestedScanMode)) {
+      refined = await this.rescueProductIdentification(img, refined);
+    }
+    if (this.shouldRunProductIdentificationRescue(refined, requestedScanMode)) {
+      refined = await this.rescueLabelOcrProduct(img, refined);
+    }
+    if (this.shouldRunProductIdentificationRescue(refined, requestedScanMode)) {
+      refined = await this.rescueVisualProductGuess(img, refined);
+    }
+
+    return this.applyEmergencyWarehouseFallback(refined, requestedScanMode);
   }
 
   private mergeMlVisionDetection(
@@ -5102,7 +5326,7 @@ Rules:
         ? forcedFrontPallets * directRows * (likelyIndustrial ? 4 : 3)
         : 0;
     const correctedDirect =
-      forcedFrontPallets >= 2
+      forcedFrontPallets >= 4
         ? {
             ...direct,
             envase: 'palet con cajas',
