@@ -2,13 +2,17 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
+import * as express from 'express';
+import { join } from 'path';
 import { MessagesRealtimeService } from './messages/messages-realtime.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
   
   app.use(bodyParser.json({ limit: '10mb' }));
   app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+  app.use('/uploads', express.static(join(process.cwd(), 'tmp', 'uploads')));
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
