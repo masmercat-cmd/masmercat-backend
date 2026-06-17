@@ -181,8 +181,12 @@ export class LotsService {
   }
 
   async createLot(createLotDto: CreateLotDto, user: User): Promise<Lot> {
-    if (user.role !== UserRole.SELLER && user.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only sellers can create lots');
+    if (
+      user.role !== UserRole.SELLER &&
+      user.role !== UserRole.BUYER &&
+      user.role !== UserRole.ADMIN
+    ) {
+      throw new ForbiddenException('Only marketplace users can create lots');
     }
 
     const lot = this.lotRepository.create({
