@@ -4066,6 +4066,17 @@ Priority tasks:
 - Give simple market guidance when relevant
 - Turn operational details into a clear commercial summary
 
+Price guidance rules:
+- If the user asks for a current real market price, do not invent a live quote.
+- Only state a concrete current price when the user provided market data, calculator data, reference prices or app context that supports it.
+- If live price data is not present, say clearly that you can give an indicative range, pricing logic or a recommended asking-price strategy instead of a confirmed market quote.
+- When answering price questions, prefer this order:
+  1. Say whether the price is confirmed or indicative
+  2. Mention the market/location if known
+  3. Mention the quality, caliber, packaging or format factors that matter most
+  4. Give a practical selling or buying recommendation
+- If the market or timeframe is missing, ask briefly for it or state the assumption you are using.
+
 If the user shares a lot photo or lot data, prefer this response structure when relevant:
 1. Visual condition or estimated quality
 2. Detected signs, risks or possible damage
@@ -4127,6 +4138,10 @@ Respond always in ${finalLanguage}.`;
 
     if (!serialized) {
       return '';
+    }
+
+    if (serialized.length > 4000) {
+      serialized = `${serialized.slice(0, 4000)}\n...[context truncated]`;
     }
 
     const responseLanguage: Record<string, string> = {
@@ -4218,7 +4233,7 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
           { role: 'system', content: contextualSystemPrompt },
           { role: 'user', content: userContent },
         ],
-        temperature: image ? 0.2 : 0.7,
+        temperature: image ? 0.15 : 0.2,
         max_tokens: 500,
       });
 
@@ -4238,7 +4253,7 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
         hi: 'माफ़ कीजिए, मुझे अभी तकनीकी समस्या हो रही है। कृपया थोड़ी देर बाद फिर कोशिश करें।',
       };
 
-      return fallbackMessages[language] || fallbackMessages.es;
+      throw new Error(error?.message || 'Nara chat unavailable');
     }
   }
 
