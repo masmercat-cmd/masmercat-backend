@@ -2,6 +2,9 @@ import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, OneToMany, Pri
 import { Lot } from '../entities/lot.entity';
 import { User } from '../entities/user.entity';
 import { TradeOffer } from './trade-offer.entity';
+import { TradeCurrency } from './trade-types';
+
+export { TradeCurrency } from './trade-types';
 
 export enum TradeRequestStatus {
   OPEN = 'open',
@@ -9,10 +12,6 @@ export enum TradeRequestStatus {
   ACCEPTED = 'accepted',
   CANCELLED = 'cancelled',
   EXPIRED = 'expired',
-}
-
-export enum TradeCurrency {
-  USD = 'USD', ARS = 'ARS', BRL = 'BRL', PYG = 'PYG', UYU = 'UYU', EUR = 'EUR',
 }
 
 @Entity('trade_requests')
@@ -25,7 +24,7 @@ export class TradeRequest {
   @Column() sellerId: string;
   @ManyToOne(() => User) @JoinColumn({ name: 'sellerId' }) seller: User;
   @Column({ type: 'decimal', precision: 12, scale: 2 }) quantity: number;
-  @Column({ type: 'enum', enum: TradeCurrency, default: TradeCurrency.USD }) currency: TradeCurrency;
+  @Column({ type: 'enum', enum: TradeCurrency, enumName: 'trade_currency_enum', default: TradeCurrency.USD }) currency: TradeCurrency;
   @Column({ type: 'enum', enum: TradeRequestStatus, default: TradeRequestStatus.OPEN }) status: TradeRequestStatus;
   @Column({ type: 'text', nullable: true }) note?: string;
   @Column({ nullable: true }) expiresAt?: Date;

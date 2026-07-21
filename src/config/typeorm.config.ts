@@ -10,7 +10,7 @@ const options: DataSourceOptions = process.env.DATABASE_URL
       type: 'postgres',
       url: process.env.DATABASE_URL,
       entities: ['dist/**/*.entity.js'],
-      migrations: ['dist/src/migrations/*.js'],
+      migrations: ['dist/src/migrations/178*.js'],
       synchronize: false,
       ssl: isProd ? { rejectUnauthorized: false } : false,
     }
@@ -29,10 +29,9 @@ const options: DataSourceOptions = process.env.DATABASE_URL
       database:
         process.env.DATABASE_NAME || process.env.DB_NAME || 'postgres',
       entities: ['dist/**/*.entity.js'],
-      migrations: ['dist/src/migrations/*.js'],
+      migrations: ['dist/src/migrations/178*.js'],
       synchronize: false,
       ssl: isProd ? { rejectUnauthorized: false } : false,
     };
 
-export const AppDataSource = new DataSource(options);
-export default AppDataSource;
+export default new DataSource(options);
