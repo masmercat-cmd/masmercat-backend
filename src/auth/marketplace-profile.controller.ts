@@ -55,6 +55,12 @@ class CreateMarketplaceProfileDto {
   description?: string;
 }
 
+class ListMarketplaceProfilesDto {
+  @IsOptional()
+  @IsEnum(MarketplaceAccountType)
+  accountType?: MarketplaceAccountType;
+}
+
 class AddCertificateDto {
   @IsString() @IsNotEmpty() @MaxLength(120)
   name: string;
@@ -176,8 +182,8 @@ export class MarketplaceProfileController {
   ) {}
 
   @Get('profiles')
-  listPublic(@Query('accountType') accountType?: MarketplaceAccountType) {
-    return this.marketplace.listPublic(accountType);
+  listPublic(@Query() query: ListMarketplaceProfilesDto) {
+    return this.marketplace.listPublic(query.accountType);
   }
 
   @Get('forwarder-services')
