@@ -8,10 +8,33 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { User } from '../entities/user.entity';
 import { LogModule } from '../log/log.module';
+import { MarketplaceProfile } from './marketplace-profile.entity';
+import { SupplierCertificate } from './supplier-certificate.entity';
+import { MarketplaceProfileController } from './marketplace-profile.controller';
+import { MarketplaceProfileService } from './marketplace-profile.service';
+import { ForwarderService } from './forwarder-service.entity';
+import { TradeRequest } from './trade-request.entity';
+import { TradeOffer } from './trade-offer.entity';
+import { TradeOrder } from './trade-order.entity';
+import { TradeService } from './trade.service';
+import { Lot } from '../entities/lot.entity';
+import { FreightRequest } from './freight-request.entity';
+import { FreightQuote } from './freight-quote.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([
+      User,
+      Lot,
+      MarketplaceProfile,
+      SupplierCertificate,
+      ForwarderService,
+      TradeRequest,
+      TradeOffer,
+      TradeOrder,
+      FreightRequest,
+      FreightQuote,
+    ]),
     PassportModule,
     LogModule,
     JwtModule.registerAsync({
@@ -25,8 +48,8 @@ import { LogModule } from '../log/log.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  controllers: [AuthController, MarketplaceProfileController],
+  providers: [AuthService, JwtStrategy, MarketplaceProfileService, TradeService],
   exports: [AuthService],
 })
 export class AuthModule {}

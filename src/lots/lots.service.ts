@@ -103,6 +103,10 @@ export class UpdateLotDto {
 export class FilterLotsDto {
   @IsOptional()
   @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
   fruitId?: string;
 
   @IsOptional()
@@ -216,7 +220,7 @@ export class LotsService {
       throw new NotFoundException('Lot not found');
     }
 
-    if (lot.sellerId !== user.id && user.role !== 'admin') {
+    if (lot.sellerId !== user.id && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('You can only update your own lots');
     }
 
@@ -242,7 +246,7 @@ export class LotsService {
       throw new NotFoundException('Lot not found');
     }
 
-    if (lot.sellerId !== user.id && user.role !== 'admin') {
+    if (lot.sellerId !== user.id && user.role !== UserRole.ADMIN) {
       throw new ForbiddenException('You can only delete your own lots');
     }
 
@@ -271,6 +275,8 @@ export class LotsService {
 
   async getLots(filterDto: FilterLotsDto) {
     const { page = 1, limit = 20, ...filters } = filterDto;
+    const normalizedPage = this.normalizePositiveNumber(page, 1);
+    const normalizedLimit = this.normalizePositiveNumber(limit, 20);
     
     const query = this.lotRepository.createQueryBuilder('lot')
       .leftJoinAndSelect('lot.seller', 'seller')
@@ -281,6 +287,19 @@ export class LotsService {
 
     if (filters.fruitId) {
       query.andWhere('lot.fruitId = :fruitId', { fruitId: filters.fruitId });
+    }
+
+    if (filters.search?.trim()) {
+      query.andWhere(
+        `(
+          LOWER(fruit."nameEs") LIKE :search OR
+          LOWER(fruit."nameEn") LIKE :search OR
+          LOWER(fruit."nameFr") LIKE :search OR
+          LOWER(fruit."nameDe") LIKE :search OR
+          LOWER(fruit."namePt") LIKE :search
+        )`,
+        { search: `%${filters.search.trim().toLowerCase()}%` },
+      );
     }
 
     if (filters.marketId) {
@@ -310,15 +329,15 @@ export class LotsService {
     query.orderBy('lot.createdAt', 'DESC');
 
     const [lots, total] = await query
-      .skip((page - 1) * limit)
-      .take(limit)
+      .skip((normalizedPage - 1) * normalizedLimit)
+      .take(normalizedLimit)
       .getManyAndCount();
 
     return {
       lots: lots.map((lot) => this.sanitizeLot(lot)),
       total,
-      page,
-      totalPages: Math.ceil(total / limit),
+      page: normalizedPage,
+      totalPages: Math.ceil(total / normalizedLimit),
     };
   }
 

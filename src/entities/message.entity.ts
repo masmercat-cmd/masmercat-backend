@@ -34,7 +34,7 @@ export class Message {
   @Column()
   sellerId: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   senderId: string | null;
 
   @Column({ type: 'text' })

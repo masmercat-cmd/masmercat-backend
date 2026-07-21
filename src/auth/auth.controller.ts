@@ -2,12 +2,13 @@ import { Controller, Post, Put, Body, Req, UseGuards, Get, ValidationPipe, UsePi
 import { AuthService, RegisterDto, LoginDto, ProfileUpdateData } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Request } from 'express';
-import { IsString, IsOptional, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNotEmpty } from 'class-validator';
 import { Language } from '../entities/user.entity';
 
 export class UpdateProfileDto {
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
   name?: string;
 
   @IsOptional()
@@ -16,6 +17,7 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
   country?: string;
 
   @IsOptional()
@@ -31,6 +33,15 @@ export class UpdateProfileDto {
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
 export class AuthController {
   constructor(private authService: AuthService) {}
+
+  @Get('health')
+  health() {
+    return {
+      status: 'ok',
+      service: 'masmercat-backend',
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   @Post('register')
   async register(@Body() registerDto: RegisterDto, @Req() req: Request) {

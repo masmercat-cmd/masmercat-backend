@@ -9,6 +9,9 @@ git
 vision-service/models
 vision-service/runs
 vision-service/.venv/
+vision-service/.deps/
+vision-service/__pycache__/
+vision-service/run_local.py
 vision-dataset/images/
 vision-dataset/ground_truth.csv
 vision-dataset/validated_reference_cases.csv

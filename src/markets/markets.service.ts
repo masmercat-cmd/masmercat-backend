@@ -18,6 +18,12 @@ interface ReferencePriceFilters {
 
 @Injectable()
 export class MarketsService {
+  private static readonly productAliases: Record<string, string[]> = {
+    melon: ['melon', 'melons', 'melone', 'melones'],
+    melocoton: ['melocoton', 'melocotones', 'peach', 'peaches', 'peche', 'peches', 'pfirsich', 'pfirsiche'],
+    sandia: ['sandia', 'sandias', 'watermelon', 'watermelons', 'wassermelone', 'wassermelonen'],
+  };
+  private static readonly defaultEuProducts = Object.keys(MarketsService.productAliases);
   private static readonly euBaseUrls = [
     'https://agridata.ec.europa.eu',
     'https://acceptance.agridata.ec.europa.eu',
@@ -100,7 +106,8 @@ export class MarketsService {
 
   async getReferencePrices(filters: ReferencePriceFilters) {
     const limit = Math.min(Math.max(filters.limit ?? 40, 1), 200);
-    const query = (filters.query ?? '').trim().toLowerCase();
+    const query = this.normalizeSearchText(filters.query);
+    const queryTerms = this.expandSearchTerms(query);
 
     const rows = await this.priceHistoryRepository.find({
       relations: ['fruit', 'market'],
@@ -108,7 +115,6 @@ export class MarketsService {
         date: 'DESC',
         createdAt: 'DESC',
       },
-      take: 400,
     });
 
     const filtered = rows.filter((row) => {
@@ -130,9 +136,11 @@ export class MarketsService {
         row.market?.city,
       ]
         .filter(Boolean)
-        .map((value) => `${value}`.toLowerCase());
+        .map((value) => this.normalizeSearchText(`${value}`));
 
-      return values.some((value) => value.includes(query));
+      return values.some((value) =>
+        queryTerms.some((term) => value.includes(term)),
+      );
     });
 
     const deduped = new Map<string, PriceHistory>();
@@ -149,14 +157,14 @@ export class MarketsService {
   }
 
   async getMapReferencePrices(filters: ReferencePriceFilters) {
-    const query = (filters.query ?? '').trim().toLowerCase();
+    const query = this.normalizeSearchText(filters.query);
+    const queryTerms = this.expandSearchTerms(query);
     const histories = await this.priceHistoryRepository.find({
       relations: ['fruit', 'market'],
       order: {
         date: 'DESC',
         createdAt: 'DESC',
       },
-      take: 600,
     });
 
     const latestByFruitMarket = new Map<string, PriceHistory>();
@@ -318,14 +326,16 @@ export class MarketsService {
           ...(item.topProducts ?? []),
         ]
           .filter(Boolean)
-          .map((value) => `${value}`.toLowerCase());
+          .map((value) => this.normalizeSearchText(`${value}`));
 
-        return haystack.some((value) => value.includes(query));
+        return haystack.some((value) =>
+          queryTerms.some((term) => value.includes(term)),
+        );
       });
     }
 
     if (values.length === 0) {
-      return this.getMapFallbackFromLots(query);
+      return this.getMapFallbackFromLots(filters, query);
     }
 
     return values;
@@ -333,15 +343,16 @@ export class MarketsService {
 
   async getEuOfficialPrices(filters: ReferencePriceFilters) {
     const limit = Math.min(Math.max(filters.limit ?? 40, 1), 120);
-    const products = `${filters.products ?? ''}`
+    const requestedProducts = `${filters.products ?? ''}`
       .split(',')
       .map((item) => item.trim())
       .filter((item, index, list) => item.length > 0 && list.indexOf(item) === index);
-    const memberStateCode = `${filters.country ?? ''}`.trim().toUpperCase();
-
-    if (products.length === 0) {
+    if (requestedProducts.length === 0) {
       return [];
     }
+
+    const products = this.expandEuProductQueries(requestedProducts);
+    const memberStateCode = this.resolveMemberStateCode(filters.country);
 
     const stages = [
       '',
@@ -413,7 +424,11 @@ export class MarketsService {
       .slice(0, limit);
   }
 
-  private async getMapFallbackFromLots(query: string) {
+  private async getMapFallbackFromLots(
+    filters: ReferencePriceFilters,
+    query: string,
+  ) {
+    const queryTerms = this.expandSearchTerms(query);
     const lots = await this.lotsRepository.find({
       relations: ['fruit', 'market'],
       where: { isActive: true },
@@ -424,6 +439,9 @@ export class MarketsService {
     const grouped = new Map<string, any>();
     for (const lot of lots) {
       if (!lot.market || lot.market.latitude == null || lot.market.longitude == null) {
+        continue;
+      }
+      if (!this.matchesLotFilters(lot, filters)) {
         continue;
       }
 
@@ -497,9 +515,11 @@ export class MarketsService {
           ...item.priceItems.map((price) => price.fruitName),
         ]
           .filter(Boolean)
-          .map((value) => `${value}`.toLowerCase());
+          .map((value) => this.normalizeSearchText(`${value}`));
 
-        return haystack.some((value) => value.includes(query));
+        return haystack.some((value) =>
+          queryTerms.some((term) => value.includes(term)),
+        );
       });
     }
 
@@ -606,7 +626,17 @@ export class MarketsService {
   }
 
   private parseEuropeanDate(value: string): number {
-    const parts = `${value ?? ''}`.split('/');
+    const rawValue = `${value ?? ''}`.trim();
+    if (!rawValue) {
+      return 0;
+    }
+
+    const isoTimestamp = Date.parse(rawValue);
+    if (Number.isFinite(isoTimestamp)) {
+      return isoTimestamp;
+    }
+
+    const parts = rawValue.split('/');
     if (parts.length !== 3) {
       return 0;
     }
@@ -615,6 +645,42 @@ export class MarketsService {
     const month = Number.parseInt(parts[1], 10) || 1;
     const year = Number.parseInt(parts[2], 10) || 1970;
     return new Date(year, month - 1, day).getTime();
+  }
+
+  private expandEuProductQueries(products: string[]): string[] {
+    const expanded = new Set<string>();
+
+    for (const product of products) {
+      const normalized = this.normalizeSearchText(product);
+      if (!normalized) {
+        continue;
+      }
+
+      expanded.add(normalized);
+
+      for (const [canonical, aliases] of Object.entries(MarketsService.productAliases)) {
+        const normalizedCanonical = this.normalizeSearchText(canonical);
+        const normalizedAliases = aliases.map((alias) =>
+          this.normalizeSearchText(alias),
+        );
+        if (
+          normalized === normalizedCanonical ||
+          normalizedAliases.includes(normalized)
+        ) {
+          expanded.add(normalizedCanonical);
+          for (const alias of normalizedAliases) {
+            expanded.add(alias);
+          }
+        }
+      }
+    }
+
+    return Array.from(expanded);
+  }
+
+  private resolveMemberStateCode(value?: string): string {
+    const resolved = this.resolveCountryCode(`${value ?? ''}`);
+    return /^[a-z]{2}$/.test(resolved) ? resolved.toUpperCase() : '';
   }
 
   private matchesCountryFilter(row: PriceHistory, country?: string): boolean {
@@ -714,6 +780,43 @@ export class MarketsService {
       .replace(/[\u0300-\u036f]/g, '')
       .trim()
       .toLowerCase();
+  }
+
+  private normalizeSearchText(value?: string): string {
+    return this.normalizeText(`${value ?? ''}`);
+  }
+
+  private expandSearchTerms(query: string): string[] {
+    if (!query) {
+      return [];
+    }
+
+    const directTerms = query
+      .split(/\s+/)
+      .map((item) => this.normalizeSearchText(item))
+      .filter((item) => item.length > 0);
+    const expanded = new Set<string>([query, ...directTerms]);
+
+    for (const [canonical, aliases] of Object.entries(MarketsService.productAliases)) {
+      const normalizedCanonical = this.normalizeSearchText(canonical);
+      const normalizedAliases = aliases.map((alias) =>
+        this.normalizeSearchText(alias),
+      );
+      if (
+        normalizedCanonical.includes(query) ||
+        query.includes(normalizedCanonical) ||
+        normalizedAliases.some(
+          (alias) => alias.includes(query) || query.includes(alias),
+        )
+      ) {
+        expanded.add(normalizedCanonical);
+        for (const alias of normalizedAliases) {
+          expanded.add(alias);
+        }
+      }
+    }
+
+    return Array.from(expanded).filter((item) => item.length > 0);
   }
 
   private normalizeRegionKey(value: string): string {

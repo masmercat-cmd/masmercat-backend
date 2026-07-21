@@ -12,6 +12,7 @@
     "vision:regression": "node ./node_modules/ts-node/dist/bin.js scripts/vision-box-regression.ts",
     "migration:generate": "typeorm migration:generate -d src/config/typeorm.config.ts",
     "migration:run": "typeorm migration:run -d src/config/typeorm.config.ts",
+    "migration:run:prod": "node ./node_modules/typeorm/cli.js migration:run -d dist/src/config/typeorm.config.js",
     "migration:revert": "typeorm migration:revert -d src/config/typeorm.config.ts"
   },
   "engines": {

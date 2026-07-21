@@ -4,8 +4,9 @@ services:
     runtime: node
     plan: starter
     buildCommand: npm install && npm run build
+    preDeployCommand: npm run migration:run:prod
     startCommand: npm run start:prod
-    healthCheckPath: /ai/debug-version
+    healthCheckPath: /auth/health
     envVars:
       - key: NODE_VERSION
         value: 20
