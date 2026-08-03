@@ -342,6 +342,18 @@ function buildHelperCases(): HelperRegressionCase[] {
       }),
     },
     {
+      description: 'inferFrontPalletGridCount expands three frontal lanes across eight depth positions',
+      run: (service) => ({
+        actual: service.inferFrontPalletGridCount({
+          numero_palets: 3,
+          bloques_palets_visibles: 3,
+          columnas_palets_visibles: 3,
+          filas_palets_visibles: 8,
+        }),
+        expected: 24,
+      }),
+    },
+    {
       description: 'inferScenePipeline upgrades ambiguous frontal warehouse scans to multi from pallet pre-count',
       run: (service) => ({
         actual: service.inferScenePipeline(

@@ -5179,15 +5179,21 @@ Rules:
         '{',
         '  "bloques_palets_visibles": 0,',
         '  "numero_palets": 0,',
+        '  "columnas_palets_visibles": 0,',
+        '  "filas_palets_visibles": 0,',
+        '  "profundidad_palets_visible": 0,',
         '  "columnas_visibles_frontal": 0,',
         '  "filas_visibles_frontal": 0,',
         '  "confianza_bloques": "high/medium/low"',
         '}',
         '',
         'Rules:',
-        '- This is a frontal or diagonal multi-pallet scene, not a warehouse top view.',
-        '- Count distinct vertical pallet blocks from left to right.',
-        '- If three separate tall pallet stacks are visible, return 3.',
+        '- This may be a frontal or diagonal warehouse scene with pallets extending into depth.',
+        '- Count pallet positions, not only the few vertical blocks nearest to the camera.',
+        '- columnas_palets_visibles is the number of pallet lanes from left to right.',
+        '- filas_palets_visibles or profundidad_palets_visible is the number of pallet positions extending backwards.',
+        '- numero_palets must equal the visible pallet grid when evidence supports it: columns times rows/depth.',
+        '- Example: 3 pallet lanes with 8 pallet positions in depth means 24 pallets, not 3.',
         '- Do not collapse several adjacent stacks into one dominant pallet.',
         '- columnas_visibles_frontal means the total front columns across the visible pallet blocks.',
         '- filas_visibles_frontal means the visible stacked rows in height.',
@@ -5197,6 +5203,26 @@ Rules:
       ].join('\n'),
       'OpenAI front multi visible blocks',
       140,
+    );
+  }
+
+  private inferFrontPalletGridCount(...sources: any[]): number {
+    return Math.max(
+      0,
+      ...sources.map((source) => {
+        const columns = this.toNumber(source?.columnas_palets_visibles);
+        const rows = Math.max(
+          this.toNumber(source?.filas_palets_visibles),
+          this.toNumber(source?.profundidad_palets_visible),
+        );
+        return Math.max(
+          this.toNumber(source?.numero_palets),
+          this.toNumber(source?.pallet_count),
+          this.toNumber(source?.bloques_palets_visibles),
+          this.toNumber(source?.bases_independientes_visibles),
+          columns > 0 && rows > 0 ? columns * rows : 0,
+        );
+      }),
     );
   }
 
@@ -5284,7 +5310,7 @@ Rules:
         'Analyze this frontal or diagonal fruit pallet image.',
         '',
         'Direct front multi-pallet analysis.',
-        'Count only the few visible pallet blocks from left to right.',
+        'Count every visible pallet position, including rows extending into depth.',
         '',
         'Return ONLY valid JSON:',
         '{',
@@ -5310,10 +5336,10 @@ Rules:
         '}',
         '',
         'Rules:',
-        '- This is not a warehouse top-view analysis.',
-        '- Count the visible pallet blocks from left to right across the front scene.',
-        '- If three stacked pallet blocks are visible, return 3.',
-        '- Keep the total limited to the few visible frontal pallet blocks, not 24.',
+        '- A frontal or diagonal view can still contain a warehouse grid extending backwards.',
+        '- Count pallet lanes from left to right and pallet rows/positions in depth separately.',
+        '- numero_palets must be columns times rows/depth when the grid is visible.',
+        '- Example: 3 lanes by 8 positions equals 24 pallets; do not report only the 3 front lanes.',
         '- Return the total estimated boxes across those visible pallet blocks.',
         '',
         'Lectura previa del paso 1:',
@@ -5334,9 +5360,21 @@ Rules:
       this.toNumber(direct?.columnas_visibles),
       this.toNumber(visibleBlocks?.columnas_visibles_frontal),
     );
+    const palletColumns = Math.max(
+      this.toNumber(visibleBlocks?.columnas_palets_visibles),
+      this.toNumber(direct?.columnas_palets_visibles),
+    );
+    const palletRows = Math.max(
+      this.toNumber(visibleBlocks?.filas_palets_visibles),
+      this.toNumber(visibleBlocks?.profundidad_palets_visible),
+      this.toNumber(direct?.filas_palets_visibles),
+    );
     const forcedFrontPallets = Math.max(
-      this.toNumber(visibleBlocks?.numero_palets),
-      this.toNumber(visibleBlocks?.bloques_palets_visibles),
+      this.inferFrontPalletGridCount(
+        visibleBlocks,
+        direct,
+        precomputedPalletCountStage,
+      ),
       directColumns >= 6 && directRows >= 5 ? 3 : 0,
       directColumns >= 4 && directRows >= 5 ? 2 : 0,
     );
@@ -5356,9 +5394,13 @@ Rules:
             vista: direct?.vista ?? stage1?.vista ?? 'frontal',
             numero_palets: forcedFrontPallets,
             pallet_count: forcedFrontPallets,
-            bloques_palets_visibles: forcedFrontPallets,
-            columnas_palets_visibles: forcedFrontPallets,
-            filas_palets_visibles: 1,
+            bloques_palets_visibles: Math.max(
+              this.toNumber(direct?.bloques_palets_visibles),
+              forcedFrontPallets,
+            ),
+            columnas_palets_visibles:
+              palletColumns > 0 ? palletColumns : forcedFrontPallets,
+            filas_palets_visibles: palletRows > 0 ? palletRows : 1,
             columnas_visibles: Math.max(
               this.toNumber(direct?.columnas_visibles),
               this.toNumber(visibleBlocks?.columnas_visibles_frontal),
