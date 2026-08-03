@@ -115,6 +115,10 @@ export class FilterLotsDto {
 
   @IsOptional()
   @IsString()
+  sellerId?: string;
+
+  @IsOptional()
+  @IsString()
   country?: string;
 
   @IsOptional()
@@ -304,6 +308,10 @@ export class LotsService {
 
     if (filters.marketId) {
       query.andWhere('lot.marketId = :marketId', { marketId: filters.marketId });
+    }
+
+    if (filters.sellerId) {
+      query.andWhere('lot.sellerId = :sellerId', { sellerId: filters.sellerId });
     }
 
     if (filters.country) {
