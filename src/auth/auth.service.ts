@@ -7,16 +7,21 @@ import {
   NotFoundException,
   OnModuleInit,
   UnauthorizedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, MoreThan, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
+import { createHash, randomBytes } from 'crypto';
 import { User, UserRole, Language } from '../entities/user.entity';
 import { LogService } from '../log/log.service';
 import { EventType } from '../entities/log.entity';
 import { IsString, IsEmail, IsEnum, IsOptional, MinLength, IsNotEmpty } from 'class-validator';
+import { PasswordResetToken } from './password-reset-token.entity';
+
+const nodemailer: any = require('nodemailer');
 
 export class RegisterDto {
   @IsString()
@@ -59,6 +64,21 @@ export class LoginDto {
   password: string;
 }
 
+export class ForgotPasswordDto {
+  @IsEmail()
+  email: string;
+}
+
+export class ResetPasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+
+  @IsString()
+  @MinLength(8)
+  password: string;
+}
+
 export type ProfileUpdateData = Partial<
   Pick<User, 'name' | 'language' | 'country' | 'phone' | 'company'>
 >;
@@ -70,6 +90,8 @@ export class AuthService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(PasswordResetToken)
+    private passwordResetRepository: Repository<PasswordResetToken>,
     private jwtService: JwtService,
     private logService: LogService,
     private configService: ConfigService,
@@ -279,6 +301,71 @@ export class AuthService implements OnModuleInit {
       user: this.sanitizeUser(user),
       token: this.generateToken(user),
     };
+  }
+
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    const genericMessage = 'Si el correo está registrado, recibirás un enlace para restablecer la contraseña.';
+    const user = await this.userRepository.findOne({
+      where: { email: this.normalizeEmail(email), isActive: true },
+    });
+    if (!user) return { message: genericMessage };
+
+    const smtpHost = this.configService.get<string>('SMTP_HOST');
+    const smtpUser = this.configService.get<string>('SMTP_USER');
+    const smtpPassword = this.configService.get<string>('SMTP_PASSWORD');
+    if (!smtpHost || !smtpUser || !smtpPassword) {
+      this.logger.error('Password reset requested but SMTP is not configured');
+      throw new ServiceUnavailableException('El servicio de correo todavía no está configurado');
+    }
+
+    await this.passwordResetRepository.update(
+      { userId: user.id, usedAt: IsNull() },
+      { usedAt: new Date() },
+    );
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    await this.passwordResetRepository.save(this.passwordResetRepository.create({
+      tokenHash,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    }));
+
+    const frontendUrl = (this.configService.get<string>('FRONTEND_URL') || 'https://masmercat-mercado.netlify.app').replace(/\/$/, '');
+    const resetUrl = `${frontendUrl}/reset-password/?token=${encodeURIComponent(token)}`;
+    const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || 587);
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPassword },
+    });
+    await transporter.sendMail({
+      from: this.configService.get<string>('SMTP_FROM') || `MasMercat <${smtpUser}>`,
+      to: user.email,
+      subject: 'Restablecer contraseña de MasMercat',
+      text: `Has solicitado restablecer tu contraseña. Abre este enlace, válido durante 30 minutos: ${resetUrl}\n\nSi no lo solicitaste, ignora este mensaje.`,
+      html: `<p>Has solicitado restablecer tu contraseña de MasMercat.</p><p><a href="${resetUrl}">Crear una contraseña nueva</a></p><p>El enlace es válido durante 30 minutos y solo puede utilizarse una vez.</p><p>Si no lo solicitaste, ignora este mensaje.</p>`,
+    });
+    return { message: genericMessage };
+  }
+
+  async resetPassword(token: string, password: string): Promise<{ message: string }> {
+    const tokenHash = createHash('sha256').update(token.trim()).digest('hex');
+    const resetToken = await this.passwordResetRepository.findOne({
+      where: { tokenHash, usedAt: IsNull(), expiresAt: MoreThan(new Date()) },
+    });
+    if (!resetToken) throw new BadRequestException('El enlace no es válido o ha caducado');
+
+    const user = await this.userRepository.findOne({ where: { id: resetToken.userId, isActive: true } });
+    if (!user) throw new BadRequestException('El enlace no es válido o ha caducado');
+    user.password = await bcrypt.hash(password, 10);
+    await this.userRepository.manager.transaction(async manager => {
+      await manager.save(user);
+      resetToken.usedAt = new Date();
+      await manager.save(resetToken);
+      await manager.update(PasswordResetToken, { userId: user.id, usedAt: IsNull() }, { usedAt: new Date() });
+    });
+    return { message: 'Contraseña actualizada correctamente' };
   }
 
   async updateProfile(userId: string, updateData: ProfileUpdateData) {

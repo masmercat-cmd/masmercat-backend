@@ -20,6 +20,7 @@ import { TradeService } from './trade.service';
 import { Lot } from '../entities/lot.entity';
 import { FreightRequest } from './freight-request.entity';
 import { FreightQuote } from './freight-quote.entity';
+import { PasswordResetToken } from './password-reset-token.entity';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { FreightQuote } from './freight-quote.entity';
       TradeOrder,
       FreightRequest,
       FreightQuote,
+      PasswordResetToken,
     ]),
     PassportModule,
     LogModule,

@@ -1,5 +1,5 @@
 import { Controller, Post, Put, Body, Req, UseGuards, Get, ValidationPipe, UsePipes } from '@nestjs/common';
-import { AuthService, RegisterDto, LoginDto, ProfileUpdateData } from './auth.service';
+import { AuthService, RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, ProfileUpdateData } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Request } from 'express';
 import { IsString, IsOptional, IsEnum, IsNotEmpty } from 'class-validator';
@@ -55,6 +55,16 @@ export class AuthController {
     const ipAddress = req.ip;
     const userAgent = req.headers['user-agent'];
     return this.authService.login(loginDto, ipAddress, userAgent);
+  }
+
+  @Post('forgot-password')
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.requestPasswordReset(dto.email);
+  }
+
+  @Post('reset-password')
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.password);
   }
 
   @UseGuards(JwtAuthGuard)
