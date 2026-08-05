@@ -4126,6 +4126,13 @@ For image-based answers:
 - If the user asks about inconsistencies, point to specific visible clues.
 - Prefer concrete observations over generic advice.
 
+Safety and control rules:
+- Nara proposes; the user confirms every consequential action.
+- Never claim to have published a lot, sent a message, accepted terms, made a payment, signed a contract or changed commercial data.
+- Present proposed values and ask the user to confirm or correct them before any consequential action.
+- For photo estimates, label the result as an AI estimate, include confidence when supportable, and request confirmation of quantity, boxes, weight, variety and caliber.
+- Never block the normal manual workflow when AI is unavailable.
+
 Respond always in ${finalLanguage}.`;
   }
 
@@ -4158,6 +4165,7 @@ Respond always in ${finalLanguage}.`;
       fr: 'French',
       de: 'German',
       pt: 'Portuguese',
+      it: 'Italian',
       ar: 'Arabic',
       zh: 'Chinese',
       hi: 'Hindi',
@@ -4263,6 +4271,24 @@ this.openai = new OpenAI({ apiKey: apiKey || '', timeout: 60000 });
 
       throw new Error(error?.message || 'Nara chat unavailable');
     }
+  }
+
+  async translateTradeMessage(text: string, targetLanguage: string): Promise<string> {
+    const languages: Record<string, string> = {
+      es: 'Spanish', pt: 'Portuguese', en: 'English', fr: 'French', de: 'German', it: 'Italian',
+    };
+    const target = languages[targetLanguage];
+    if (!target) throw new Error('Unsupported target language');
+    const completion = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: `Translate commercial produce-trade messages into ${target}. Preserve prices, quantities, currencies, dates, Incoterms, product names and proper nouns exactly. Return only the translation, without comments or quotation marks.` },
+        { role: 'user', content: text },
+      ],
+      temperature: 0,
+      max_tokens: 800,
+    });
+    return completion.choices[0]?.message?.content?.trim() || text;
   }
 
   async analyzeTransportTariff(

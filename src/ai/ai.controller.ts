@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Req, UseGuards, Delete, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Post, Body, Get, Req, UseGuards, Delete, Query } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   AiService,
@@ -160,6 +160,7 @@ export class AiController {
     };
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('chat')
   async chat(@Req() req: Request, @Body() body: any) {
     console.log('✅ ENTRO A /ai/chat');
@@ -193,6 +194,16 @@ export class AiController {
       console.log('❌ ERROR details:', err?.response?.data || err?.response || err);
       return { ok: false, error: err?.message || 'Error interno en chat' };
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('translate-message')
+  async translateMessage(@Body() body: any) {
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    const targetLanguage = typeof body?.targetLanguage === 'string' ? body.targetLanguage : '';
+    if (!text || text.length > 3000) throw new BadRequestException('Message must contain between 1 and 3000 characters');
+    if (!['es', 'pt', 'en', 'fr', 'de', 'it'].includes(targetLanguage)) throw new BadRequestException('Unsupported target language');
+    return { translation: await this.aiService.translateTradeMessage(text, targetLanguage) };
   }
 
   @Post('analyze-fruit')
