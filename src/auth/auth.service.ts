@@ -310,11 +310,13 @@ export class AuthService implements OnModuleInit {
     });
     if (!user) return { message: genericMessage };
 
+    const resendApiKey = this.configService.get<string>('RESEND_API_KEY');
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpUser = this.configService.get<string>('SMTP_USER');
     const smtpPassword = this.configService.get<string>('SMTP_PASSWORD');
-    if (!smtpHost || !smtpUser || !smtpPassword) {
-      this.logger.error('Password reset requested but SMTP is not configured');
+    const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPassword);
+    if (!resendApiKey && !smtpConfigured) {
+      this.logger.error('Password reset requested but no email provider is configured');
       throw new ServiceUnavailableException('El servicio de correo todavía no está configurado');
     }
 
@@ -324,7 +326,7 @@ export class AuthService implements OnModuleInit {
     );
     const token = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    await this.passwordResetRepository.save(this.passwordResetRepository.create({
+    const resetToken = await this.passwordResetRepository.save(this.passwordResetRepository.create({
       tokenHash,
       userId: user.id,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
@@ -332,20 +334,51 @@ export class AuthService implements OnModuleInit {
 
     const frontendUrl = (this.configService.get<string>('FRONTEND_URL') || 'https://masmercat-mercado.netlify.app').replace(/\/$/, '');
     const resetUrl = `${frontendUrl}/reset-password/?token=${encodeURIComponent(token)}`;
-    const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || 587);
-    const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpPort === 465,
-      auth: { user: smtpUser, pass: smtpPassword },
-    });
-    await transporter.sendMail({
-      from: this.configService.get<string>('SMTP_FROM') || `MasMercat <${smtpUser}>`,
-      to: user.email,
-      subject: 'Restablecer contraseña de MasMercat',
-      text: `Has solicitado restablecer tu contraseña. Abre este enlace, válido durante 30 minutos: ${resetUrl}\n\nSi no lo solicitaste, ignora este mensaje.`,
-      html: `<p>Has solicitado restablecer tu contraseña de MasMercat.</p><p><a href="${resetUrl}">Crear una contraseña nueva</a></p><p>El enlace es válido durante 30 minutos y solo puede utilizarse una vez.</p><p>Si no lo solicitaste, ignora este mensaje.</p>`,
-    });
+    const subject = 'Restablecer contraseña de MasMercat';
+    const text = `Has solicitado restablecer tu contraseña. Abre este enlace, válido durante 30 minutos: ${resetUrl}\n\nSi no lo solicitaste, ignora este mensaje.`;
+    const html = `<p>Has solicitado restablecer tu contraseña de MasMercat.</p><p><a href="${resetUrl}">Crear una contraseña nueva</a></p><p>El enlace es válido durante 30 minutos y solo puede utilizarse una vez.</p><p>Si no lo solicitaste, ignora este mensaje.</p>`;
+
+    if (resendApiKey) {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `password-reset-${resetToken.id}`,
+        },
+        body: JSON.stringify({
+          from: this.configService.get<string>('RESEND_FROM') || 'MasMercat <acceso@masmercat.com>',
+          to: [user.email],
+          subject,
+          text,
+          html,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        this.logger.error(`Resend password email failed (${response.status}): ${detail}`);
+        throw new ServiceUnavailableException('No se pudo enviar el correo de recuperación');
+      }
+    } else {
+      const smtpPort = Number(this.configService.get<string>('SMTP_PORT') || 587);
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: { user: smtpUser, pass: smtpPassword },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
+      });
+      await transporter.sendMail({
+        from: this.configService.get<string>('SMTP_FROM') || `MasMercat <${smtpUser}>`,
+        to: user.email,
+        subject,
+        text,
+        html,
+      });
+    }
     return { message: genericMessage };
   }
 
