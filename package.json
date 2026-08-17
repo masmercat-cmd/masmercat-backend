@@ -10,10 +10,11 @@
     "start:dev": "node ./node_modules/@nestjs/cli/bin/nest.js start --watch",
     "start:prod": "npm run migration:run:prod && node dist/src/main.js",
     "vision:regression": "node ./node_modules/ts-node/dist/bin.js scripts/vision-box-regression.ts",
-    "migration:generate": "typeorm migration:generate -d src/config/typeorm.config.ts",
-    "migration:run": "typeorm migration:run -d src/config/typeorm.config.ts",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/config/typeorm.config.ts",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/config/typeorm.config.ts",
+    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/config/typeorm.config.ts",
     "migration:run:prod": "node ./node_modules/typeorm/cli.js migration:run -d dist/src/config/typeorm.config.js",
-    "migration:revert": "typeorm migration:revert -d src/config/typeorm.config.ts"
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/config/typeorm.config.ts"
   },
   "engines": {
     "node": "20.x"
