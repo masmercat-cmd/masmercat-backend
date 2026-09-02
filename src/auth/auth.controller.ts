@@ -2,8 +2,9 @@ import { Controller, Post, Put, Body, Req, UseGuards, Get, ValidationPipe, UsePi
 import { AuthService, RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, ProfileUpdateData } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Request } from 'express';
-import { IsString, IsOptional, IsEnum, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNotEmpty, MaxLength } from 'class-validator';
 import { Language } from '../entities/user.entity';
+import { BetaFeedbackCategory } from './beta-feedback.entity';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -27,6 +28,25 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   company?: string;
+}
+
+export class BetaFeedbackDto {
+  @IsEnum(BetaFeedbackCategory)
+  category: BetaFeedbackCategory;
+
+  @IsString()
+  @MaxLength(2000)
+  comment: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  platform?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  appVersion?: string;
 }
 
 @Controller('auth')
@@ -77,5 +97,17 @@ export class AuthController {
   @Put('profile')
   async updateProfile(@Req() req: any, @Body() updateDto: UpdateProfileDto) {
     return this.authService.updateProfile(req.user.id, updateDto as ProfileUpdateData);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('feedback')
+  async submitBetaFeedback(@Req() req: any, @Body() dto: BetaFeedbackDto) {
+    return this.authService.submitBetaFeedback(
+      req.user.id,
+      dto.category,
+      dto.comment,
+      dto.platform,
+      dto.appVersion,
+    );
   }
 }

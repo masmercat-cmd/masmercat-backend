@@ -20,6 +20,7 @@ import { LogService } from '../log/log.service';
 import { EventType } from '../entities/log.entity';
 import { IsString, IsEmail, IsEnum, IsOptional, MinLength, IsNotEmpty } from 'class-validator';
 import { PasswordResetToken } from './password-reset-token.entity';
+import { BetaFeedback, BetaFeedbackCategory } from './beta-feedback.entity';
 
 const nodemailer: any = require('nodemailer');
 
@@ -92,6 +93,8 @@ export class AuthService implements OnModuleInit {
     private userRepository: Repository<User>,
     @InjectRepository(PasswordResetToken)
     private passwordResetRepository: Repository<PasswordResetToken>,
+    @InjectRepository(BetaFeedback)
+    private betaFeedbackRepository: Repository<BetaFeedback>,
     private jwtService: JwtService,
     private logService: LogService,
     private configService: ConfigService,
@@ -425,6 +428,24 @@ export class AuthService implements OnModuleInit {
 
     await this.userRepository.save(user);
     return this.sanitizeUser(user);
+  }
+
+  async submitBetaFeedback(
+    userId: string,
+    category: BetaFeedbackCategory,
+    comment: string,
+    platform?: string,
+    appVersion?: string,
+  ) {
+    const feedback = this.betaFeedbackRepository.create({
+      userId,
+      category,
+      comment: comment.trim(),
+      platform: this.normalizeOptionalText(platform)?.slice(0, 30) ?? 'unknown',
+      appVersion: this.normalizeOptionalText(appVersion)?.slice(0, 30) ?? 'beta',
+    });
+    const saved = await this.betaFeedbackRepository.save(feedback);
+    return { ok: true, id: saved.id };
   }
 
   private generateToken(user: User): string {

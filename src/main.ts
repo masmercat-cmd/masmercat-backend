@@ -21,8 +21,21 @@ async function bootstrap() {
     }),
   );
 
+  const configuredOrigins = [process.env.FRONTEND_URL, process.env.ADMIN_URL]
+    .flatMap(value => `${value ?? ''}`.split(','))
+    .map(value => value.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: true,
+    origin: (origin, callback) => {
+      const isLocalDevelopment =
+        process.env.NODE_ENV !== 'production' &&
+        Boolean(origin?.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/));
+      if (!origin || configuredOrigins.includes(origin) || isLocalDevelopment) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('Origin not allowed by CORS'));
+    },
     credentials: true,
   });
 

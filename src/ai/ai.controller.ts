@@ -150,6 +150,7 @@ export class AiController {
     return forced;
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('debug-version')
   getDebugVersion() {
     return {
@@ -165,7 +166,7 @@ export class AiController {
   async chat(@Req() req: Request, @Body() body: any) {
     console.log('✅ ENTRO A /ai/chat');
     console.log('Content-Type:', req.headers['content-type']);
-    console.log('📦 BODY (raw):', body);
+    console.log('BODY keys:', body && typeof body === 'object' ? Object.keys(body) : []);
 
     let payload: any = body;
     if (typeof payload === 'string') {
@@ -180,7 +181,7 @@ export class AiController {
       normalized?.query;
 
     if (!message) {
-      console.log('❌ FALTA message/prompt/text/query. Payload:', normalized);
+      console.log('FALTA message/prompt/text/query');
       return { ok: false, error: 'Falta message (o prompt/text/query) en el body' };
     }
 
@@ -206,6 +207,7 @@ export class AiController {
     return { translation: await this.aiService.translateTradeMessage(text, targetLanguage) };
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('analyze-fruit')
   async analyzeFruit(@Req() req: Request, @Body() body: any) {
     console.log('🍊 ENTRO A /ai/analyze-fruit');
@@ -223,8 +225,6 @@ export class AiController {
       normalized?.imagePath ??
       normalized?.path ??
       null;
-console.log('🌍 language recibido:', normalized?.language);
-
 let image =
   normalized?.image ??
   normalized?.imageBase64 ??
@@ -243,13 +243,12 @@ if (image && typeof image === 'object') {
 }
 
 if (!image) {
-  console.log('❌ FALTA image. Payload:', normalized);
+  console.log('FALTA image');
   return { ok: false, error: 'Falta image en el body' };
 }
 
     console.log('🧾 image type:', typeof image);
     console.log('📏 image length:', image.length);
-    console.log('🔎 image first 30 chars:', String(image).slice(0, 30));
 
    try {
   const rawResult = await this.aiService.analyzeFruitImage(
@@ -266,7 +265,6 @@ if (!image) {
     ...result,     // por si espera fruta directamente
   };
 
-  console.log('✅ RESPUESTA AL FRONTEND:', payload);
   return payload;
 
 } catch (err: any) {
@@ -277,6 +275,7 @@ if (!image) {
 }
 }
 
+  @UseGuards(JwtAuthGuard)
   @Post('scan-and-weigh')
   async scanAndWeigh(@Req() req: Request, @Body() body: any) {
     console.log('ENTRO A /ai/scan-and-weigh');
@@ -344,6 +343,7 @@ if (!image) {
     }
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('analyze-transport-tariff')
   async analyzeTransportTariff(@Req() req: Request, @Body() body: any) {
     console.log('🚚 ENTRO A /ai/analyze-transport-tariff');
@@ -438,6 +438,7 @@ if (!image) {
     }
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('audit/staged-vision')
   async getStagedVisionAudit(@Query('limit') limit?: string) {
     try {

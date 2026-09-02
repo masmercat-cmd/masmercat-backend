@@ -21,6 +21,7 @@ import { Lot } from '../entities/lot.entity';
 import { FreightRequest } from './freight-request.entity';
 import { FreightQuote } from './freight-quote.entity';
 import { PasswordResetToken } from './password-reset-token.entity';
+import { BetaFeedback } from './beta-feedback.entity';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PasswordResetToken } from './password-reset-token.entity';
       FreightRequest,
       FreightQuote,
       PasswordResetToken,
+      BetaFeedback,
     ]),
     PassportModule,
     LogModule,
