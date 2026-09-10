@@ -44,3 +44,14 @@ services:
         value: "0.45"
       - key: ML_VISION_PREFER_DETECTOR
         value: "true"
+
+  - type: web
+    name: masmercat-web-beta
+    runtime: static
+    rootDir: web-static
+    buildCommand: test -f index.html && test -f main.dart.js
+    staticPublishPath: .
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
