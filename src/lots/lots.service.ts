@@ -1,9 +1,9 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { IsString, IsNumber, IsEnum, IsOptional, IsBoolean, IsArray, Min } from 'class-validator';
+import { BadRequestException, Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { IsString, IsNumber, IsEnum, IsOptional, IsBoolean, IsArray, Min, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Lot, LotStatus, UnitType, QualityGrade } from '../entities/lot.entity';
+import { Lot, LotStatus, UnitType, QualityGrade, LotCurrency, Incoterm } from '../entities/lot.entity';
 import { User, UserRole } from '../entities/user.entity';
 import { LogService } from '../log/log.service';
 import { EventType } from '../entities/log.entity';
@@ -19,12 +19,20 @@ export class CreateLotDto {
   @IsString()
   caliber?: string;
 
+  @IsOptional() @IsString() variety?: string;
+  @IsOptional() @IsString() packaging?: string;
+  @IsOptional() @IsEnum(LotCurrency) currency?: LotCurrency;
+  @IsOptional() @IsEnum(Incoterm) incoterm?: Incoterm;
+  @IsOptional() @IsString() origin?: string;
+  @IsOptional() @IsString() loadingLocation?: string;
+  @IsOptional() @IsDateString() availableFrom?: string;
+
   @IsEnum(QualityGrade)
   quality: QualityGrade;
 
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @Min(0.01)
   price: number;
 
   @IsEnum(UnitType)
@@ -58,6 +66,14 @@ export class UpdateLotDto {
   @IsString()
   caliber?: string;
 
+  @IsOptional() @IsString() variety?: string;
+  @IsOptional() @IsString() packaging?: string;
+  @IsOptional() @IsEnum(LotCurrency) currency?: LotCurrency;
+  @IsOptional() @IsEnum(Incoterm) incoterm?: Incoterm;
+  @IsOptional() @IsString() origin?: string;
+  @IsOptional() @IsString() loadingLocation?: string;
+  @IsOptional() @IsDateString() availableFrom?: string;
+
   @IsOptional()
   @IsEnum(QualityGrade)
   quality?: QualityGrade;
@@ -65,7 +81,7 @@ export class UpdateLotDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @Min(0.01)
   price?: number;
 
   @IsOptional()
@@ -98,6 +114,8 @@ export class UpdateLotDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
 export class FilterLotsDto {
@@ -189,13 +207,11 @@ export class LotsService {
   }
 
   async createLot(createLotDto: CreateLotDto, user: User): Promise<Lot> {
-    if (
-      user.role !== UserRole.SELLER &&
-      user.role !== UserRole.BUYER &&
-      user.role !== UserRole.ADMIN
-    ) {
-      throw new ForbiddenException('Only marketplace users can create lots');
+    if (user.role !== UserRole.SELLER && user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Only sellers can create lots');
     }
+
+    this.validateQuantity(createLotDto.unitType, createLotDto.weight, createLotDto.numberOfBoxes);
 
     const lot = this.lotRepository.create({
       ...createLotDto,
@@ -228,6 +244,12 @@ export class LotsService {
       throw new ForbiddenException('You can only update your own lots');
     }
 
+    const unitType = updateLotDto.unitType ?? lot.unitType;
+    const weight = updateLotDto.weight ?? Number(lot.weight);
+    const boxes = updateLotDto.numberOfBoxes ?? lot.numberOfBoxes;
+    if (updateLotDto.unitType !== undefined || updateLotDto.weight !== undefined || updateLotDto.numberOfBoxes !== undefined) {
+      this.validateQuantity(unitType, weight, boxes);
+    }
     Object.assign(lot, updateLotDto);
     await this.lotRepository.save(lot);
 
@@ -238,7 +260,8 @@ export class LotsService {
       metadata: { lotId, changes: updateLotDto },
     });
 
-    return this.getLotById(lotId);
+    const updated = await this.lotRepository.findOne({ where: { id: lotId }, relations: ['seller', 'fruit', 'market'] });
+    return this.sanitizeLot(updated)!;
   }
 
   async deleteLot(lotId: string, user: User): Promise<void> {
@@ -367,5 +390,14 @@ export class LotsService {
       page: normalizedPage,
       totalPages: Math.ceil(total / normalizedLimit),
     };
+  }
+
+  private validateQuantity(unitType: UnitType, weight?: number, numberOfBoxes?: number) {
+    if (unitType === UnitType.KG && (!Number.isFinite(Number(weight)) || Number(weight) <= 0)) {
+      throw new BadRequestException('Weight must be greater than zero for kg lots');
+    }
+    if (unitType === UnitType.BOX && (!Number.isInteger(Number(numberOfBoxes)) || Number(numberOfBoxes) <= 0)) {
+      throw new BadRequestException('Number of boxes must be greater than zero for box lots');
+    }
   }
 }

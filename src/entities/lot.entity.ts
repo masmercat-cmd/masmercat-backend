@@ -22,6 +22,9 @@ export enum QualityGrade {
   INDUSTRIAL = 'industrial'
 }
 
+export enum LotCurrency { EUR = 'EUR', USD = 'USD' }
+export enum Incoterm { EXW = 'EXW', DAP = 'DAP' }
+
 @Entity('lots')
 export class Lot {
   @PrimaryGeneratedColumn('uuid')
@@ -51,6 +54,12 @@ export class Lot {
   @Column({ length: 100, nullable: true })
   caliber: string;
 
+  @Column({ length: 120, nullable: true })
+  variety: string;
+
+  @Column({ length: 160, nullable: true })
+  packaging: string;
+
   @Column({
     type: 'enum',
     enum: QualityGrade,
@@ -60,6 +69,21 @@ export class Lot {
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   price: number;
+
+  @Column({ type: 'enum', enum: LotCurrency, default: LotCurrency.EUR })
+  currency: LotCurrency;
+
+  @Column({ type: 'enum', enum: Incoterm, default: Incoterm.EXW })
+  incoterm: Incoterm;
+
+  @Column({ length: 160, nullable: true })
+  origin: string;
+
+  @Column({ length: 255, nullable: true })
+  loadingLocation: string;
+
+  @Column({ type: 'date', nullable: true })
+  availableFrom: string;
 
   @Column({
     type: 'enum',
