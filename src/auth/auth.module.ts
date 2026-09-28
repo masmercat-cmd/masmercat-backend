@@ -22,6 +22,9 @@ import { FreightRequest } from './freight-request.entity';
 import { FreightQuote } from './freight-quote.entity';
 import { PasswordResetToken } from './password-reset-token.entity';
 import { BetaFeedback } from './beta-feedback.entity';
+import { Log } from '../entities/log.entity';
+import { PrivacyCleanupService } from './privacy-cleanup.service';
+import { Message } from '../entities/message.entity';
 
 @Module({
   imports: [
@@ -38,6 +41,8 @@ import { BetaFeedback } from './beta-feedback.entity';
       FreightQuote,
       PasswordResetToken,
       BetaFeedback,
+      Log,
+      Message,
     ]),
     PassportModule,
     LogModule,
@@ -46,14 +51,14 @@ import { BetaFeedback } from './beta-feedback.entity';
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRATION') || '7d',
+          expiresIn: (configService.get<string>('JWT_EXPIRATION') || '7d') as any,
         },
       }),
       inject: [ConfigService],
     }),
   ],
   controllers: [AuthController, MarketplaceProfileController],
-  providers: [AuthService, JwtStrategy, MarketplaceProfileService, TradeService],
+  providers: [AuthService, JwtStrategy, MarketplaceProfileService, TradeService, PrivacyCleanupService],
   exports: [AuthService],
 })
 export class AuthModule {}

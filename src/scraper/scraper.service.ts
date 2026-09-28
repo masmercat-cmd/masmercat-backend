@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import axios from 'axios';
-import * as XLSX from 'xlsx';
+import * as ExcelJS from 'exceljs';
 import WebSocket from 'ws';
 import { Fruit } from '../entities/fruit.entity';
 import { Market } from '../entities/market.entity';
@@ -2200,12 +2200,24 @@ export class ScraperService {
     }
 
     const referenceDate = this.extractMercadoCentralSheetDate(entry.entryName);
-    const workbook = XLSX.read(entry.getData(), { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[sheetName], {
-      header: 1,
-      defval: '',
-      raw: false,
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(entry.getData());
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) return [];
+    const rows: any[][] = [];
+    worksheet.eachRow({ includeEmpty: false }, row => {
+      const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+      rows.push(values.map(value => {
+        if (value == null) return '';
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value !== 'object') return value;
+        if ('result' in value && value.result != null) return value.result;
+        if ('text' in value && value.text != null) return value.text;
+        if ('richText' in value && Array.isArray(value.richText)) {
+          return value.richText.map(part => part.text || '').join('');
+        }
+        return `${value}`;
+      }));
     });
 
     if (rows.length === 0) {

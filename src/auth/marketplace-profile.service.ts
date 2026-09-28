@@ -18,6 +18,8 @@ import {
   SupplierCertificate,
 } from './supplier-certificate.entity';
 import { ForwarderService, ForwarderServiceCategory } from './forwarder-service.entity';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export interface CreateMarketplaceProfileData {
   accountType: MarketplaceAccountType;
@@ -87,7 +89,12 @@ export class MarketplaceProfileService {
     if (certificatesExpired) {
       await this.refreshTrustLevel(profile);
     }
-    return profile;
+    return {
+      ...profile,
+      certificates: await Promise.all(
+        profile.certificates.map(certificate => this.withPrivateDocumentUrl(certificate)),
+      ),
+    };
   }
 
   async listPublic(accountType?: MarketplaceAccountType) {
@@ -123,6 +130,13 @@ export class MarketplaceProfileService {
     }
     if (data.issuedAt && data.expiresAt && data.expiresAt < data.issuedAt) {
       throw new BadRequestException('Certificate expiration must be after its issue date');
+    }
+    const expectedBucket = process.env.AWS_S3_BUCKET?.trim();
+    const expectedPrefix = expectedBucket
+      ? `s3://${expectedBucket}/certificates/${userId}/`
+      : undefined;
+    if (!expectedPrefix || !data.documentUrl.startsWith(expectedPrefix)) {
+      throw new BadRequestException('Certificate document reference is invalid');
     }
     const certificate = this.certificateRepository.create({
       ...data,
@@ -202,8 +216,8 @@ export class MarketplaceProfileService {
       relations: ['profile'],
       order: { createdAt: 'DESC' },
     });
-    return certificates.map(certificate => ({
-      ...certificate,
+    return Promise.all(certificates.map(async certificate => ({
+      ...await this.withPrivateDocumentUrl(certificate),
       profile: {
         id: certificate.profile.id,
         userId: certificate.profile.userId,
@@ -213,7 +227,7 @@ export class MarketplaceProfileService {
         region: certificate.profile.region,
         trustLevel: certificate.profile.trustLevel,
       },
-    }));
+    })));
   }
 
   async listProfilesForAdmin(reviewer: { role: UserRole }) {
@@ -276,6 +290,29 @@ export class MarketplaceProfileService {
   private optional(value?: string) {
     const normalized = value?.trim();
     return normalized || undefined;
+  }
+
+  private async withPrivateDocumentUrl(certificate: SupplierCertificate) {
+    const documentUrl = certificate.documentUrl;
+    if (!documentUrl?.startsWith('s3://')) return certificate;
+    const match = documentUrl.match(/^s3:\/\/([^/]+)\/(.+)$/);
+    if (!match) return { ...certificate, documentUrl: undefined };
+    const [, bucket, key] = match;
+    const region = process.env.AWS_REGION?.trim();
+    if (!region) return { ...certificate, documentUrl: undefined };
+    const s3 = new S3Client({ region });
+    return {
+      ...certificate,
+      documentUrl: await getSignedUrl(
+        s3,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentDisposition: 'attachment',
+        }),
+        { expiresIn: 300 },
+      ),
+    };
   }
 
   private requireAdmin(user: { role: UserRole }) {

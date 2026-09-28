@@ -49,6 +49,7 @@ export class AiService {
   private readonly stagedVisionAudit: Array<Record<string, any>> = [];
 
   private logVisionSnapshot(label: string, payload: any): void {
+    if (process.env.NODE_ENV === 'production') return;
     try {
       console.log(`📦 ${label}:`, JSON.stringify(payload, null, 2));
     } catch {
@@ -2219,7 +2220,7 @@ export class AiService {
       visibleRows <= 8 &&
       estimatedDepth <= 2 &&
       topBoxes >= 8 &&
-      estimatedBoxes <= 60;
+      estimatedBoxes <= 96;
 
     if (!likelyZapoteFrontPallet) {
       return estimatedBoxes;

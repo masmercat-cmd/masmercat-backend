@@ -192,6 +192,10 @@ export class LotsService {
     }
 
     const { password, ...sanitizedUser } = user as User;
+    if (!sanitizedUser.publicContactConsent) {
+      const { email, phone, ...privateContactUser } = sanitizedUser;
+      return privateContactUser as T;
+    }
     return sanitizedUser as T;
   }
 
@@ -277,13 +281,16 @@ export class LotsService {
       throw new ForbiddenException('You can only delete your own lots');
     }
 
-    await this.lotRepository.remove(lot);
+    // Keep the lot and its audit trail. A seller-facing "delete" is a
+    // withdrawal from the public marketplace, not a destructive DB delete.
+    lot.isActive = false;
+    await this.lotRepository.save(lot);
 
     await this.logService.createLog({
       userId: user.id,
       eventType: EventType.LOT_DELETE,
-      detail: `Lot deleted: ${lotId}`,
-      metadata: { lotId },
+      detail: `Lot withdrawn: ${lotId}`,
+      metadata: { lotId, previousStatus: lot.status },
     });
   }
 

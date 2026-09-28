@@ -2,7 +2,7 @@ import { Controller, Post, Put, Body, Req, UseGuards, Get, ValidationPipe, UsePi
 import { AuthService, RegisterDto, LoginDto, ForgotPasswordDto, ResetPasswordDto, ProfileUpdateData } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Request } from 'express';
-import { IsString, IsOptional, IsEnum, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNotEmpty, MaxLength, IsBoolean } from 'class-validator';
 import { Language } from '../entities/user.entity';
 import { BetaFeedbackCategory } from './beta-feedback.entity';
 
@@ -28,6 +28,10 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   company?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  publicContactConsent?: boolean;
 }
 
 export class BetaFeedbackDto {
@@ -47,6 +51,12 @@ export class BetaFeedbackDto {
   @IsString()
   @MaxLength(30)
   appVersion?: string;
+}
+
+export class DeactivateAccountDto {
+  @IsString()
+  @IsNotEmpty()
+  password: string;
 }
 
 @Controller('auth')
@@ -97,6 +107,18 @@ export class AuthController {
   @Put('profile')
   async updateProfile(@Req() req: any, @Body() updateDto: UpdateProfileDto) {
     return this.authService.updateProfile(req.user.id, updateDto as ProfileUpdateData);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('my-data')
+  async getMyData(@Req() req: any) {
+    return this.authService.getMyData(req.user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('deactivate-account')
+  async deactivateAccount(@Req() req: any, @Body() dto: DeactivateAccountDto) {
+    return this.authService.deactivateAccount(req.user.id, dto.password);
   }
 
   @UseGuards(JwtAuthGuard)

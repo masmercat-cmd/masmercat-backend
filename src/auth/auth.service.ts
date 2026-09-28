@@ -12,15 +12,20 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, MoreThan, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { User, UserRole, Language } from '../entities/user.entity';
 import { LogService } from '../log/log.service';
 import { EventType } from '../entities/log.entity';
-import { IsString, IsEmail, IsEnum, IsOptional, MinLength, IsNotEmpty } from 'class-validator';
+import { IsString, IsEmail, IsEnum, IsOptional, MinLength, IsNotEmpty, IsBoolean, Equals } from 'class-validator';
 import { PasswordResetToken } from './password-reset-token.entity';
 import { BetaFeedback, BetaFeedbackCategory } from './beta-feedback.entity';
+import { MarketplaceProfile } from './marketplace-profile.entity';
+import { SupplierCertificate } from './supplier-certificate.entity';
+import { Lot } from '../entities/lot.entity';
+import { Message } from '../entities/message.entity';
+import { Log } from '../entities/log.entity';
 
 const nodemailer: any = require('nodemailer');
 
@@ -54,6 +59,14 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   company?: string;
+
+  @IsBoolean()
+  @Equals(true, { message: 'Debes aceptar las Condiciones de uso y la Política de privacidad' })
+  acceptedTerms: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  publicContactConsent?: boolean;
 }
 
 export class LoginDto {
@@ -81,7 +94,7 @@ export class ResetPasswordDto {
 }
 
 export type ProfileUpdateData = Partial<
-  Pick<User, 'name' | 'language' | 'country' | 'phone' | 'company'>
+  Pick<User, 'name' | 'language' | 'country' | 'phone' | 'company' | 'publicContactConsent'>
 >;
 
 @Injectable()
@@ -98,6 +111,7 @@ export class AuthService implements OnModuleInit {
     private jwtService: JwtService,
     private logService: LogService,
     private configService: ConfigService,
+    private dataSource: DataSource,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -266,12 +280,14 @@ export class AuthService implements OnModuleInit {
       ...normalizedRegisterDto,
       password: hashedPassword,
       language: normalizedRegisterDto.language || Language.ES,
+      termsAcceptedAt: new Date(),
+      termsVersion: '2026-09-17',
     });
     await this.userRepository.save(user);
     await this.logService.createLog({
       userId: user.id,
       eventType: EventType.USER_REGISTER,
-      detail: `User registered: ${user.email}`,
+      detail: 'User registered',
       ipAddress,
       userAgent,
     });
@@ -296,7 +312,7 @@ export class AuthService implements OnModuleInit {
     await this.logService.createLog({
       userId: user.id,
       eventType: EventType.USER_LOGIN,
-      detail: `User logged in: ${user.email}`,
+      detail: 'User logged in',
       ipAddress,
       userAgent,
     });
@@ -425,6 +441,7 @@ export class AuthService implements OnModuleInit {
     );
     user.phone = this.normalizeOptionalText(updateData.phone) ?? user.phone;
     user.company = this.normalizeOptionalText(updateData.company) ?? user.company;
+    user.publicContactConsent = updateData.publicContactConsent ?? user.publicContactConsent;
 
     await this.userRepository.save(user);
     return this.sanitizeUser(user);
@@ -446,6 +463,52 @@ export class AuthService implements OnModuleInit {
     });
     const saved = await this.betaFeedbackRepository.save(feedback);
     return { ok: true, id: saved.id };
+  }
+
+  async getMyData(userId: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const profileRepository = this.dataSource.getRepository(MarketplaceProfile);
+    const certificateRepository = this.dataSource.getRepository(SupplierCertificate);
+    const lotRepository = this.dataSource.getRepository(Lot);
+    const messageRepository = this.dataSource.getRepository(Message);
+    const logRepository = this.dataSource.getRepository(Log);
+    const profile = await profileRepository.findOne({ where: { userId } });
+    const certificates = profile
+      ? await certificateRepository.find({ where: { profileId: profile.id } })
+      : [];
+    return {
+      exportedAt: new Date().toISOString(),
+      account: this.sanitizeUser(user),
+      marketplaceProfile: profile,
+      certificates: certificates.map(({ documentUrl, ...certificate }) => certificate),
+      lots: await lotRepository.find({ where: { sellerId: userId } }),
+      messages: await messageRepository
+        .createQueryBuilder('message')
+        .where('message.buyerId = :userId OR message.sellerId = :userId', { userId })
+        .orderBy('message.createdAt', 'ASC')
+        .getMany(),
+      feedback: await this.betaFeedbackRepository.find({ where: { userId } }),
+      securityLog: await logRepository.find({ where: { userId }, order: { createdAt: 'ASC' } }),
+    };
+  }
+
+  async deactivateAccount(userId: string, password: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId, isActive: true } });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    await this.dataSource.transaction(async manager => {
+      user.isActive = false;
+      user.publicContactConsent = false;
+      await manager.save(user);
+      await manager.update(MarketplaceProfile, { userId }, { isPublic: false });
+      await manager.update(Lot, { sellerId: userId }, { isActive: false });
+      await manager.update(PasswordResetToken, { userId, usedAt: IsNull() }, { usedAt: new Date() });
+    });
+    return {
+      message: 'Cuenta desactivada. Los datos públicos han quedado ocultos. Para solicitar supresión, escribe a info@masmercat.com.',
+    };
   }
 
   private generateToken(user: User): string {

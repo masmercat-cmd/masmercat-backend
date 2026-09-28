@@ -26,7 +26,7 @@ export class LotsController {
   @Delete(':id')
   async deleteLot(@Param('id') id: string, @Req() req: any) {
     await this.lotsService.deleteLot(id, req.user);
-    return { message: 'Lot deleted successfully' };
+    return { message: 'Lot withdrawn successfully' };
   }
 
   @Get()

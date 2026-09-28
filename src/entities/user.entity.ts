@@ -62,6 +62,15 @@ export class User {
   @Column({ default: true })
   isActive: boolean;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  termsAcceptedAt: Date | null;
+
+  @Column({ nullable: true, length: 20 })
+  termsVersion: string | null;
+
+  @Column({ default: false })
+  publicContactConsent: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

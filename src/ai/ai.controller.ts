@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Post, Body, Get, Req, UseGuards, Delete, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Post, Body, Get, Req, UseGuards, Delete, Query, ForbiddenException } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   AiService,
@@ -7,6 +7,7 @@ import {
   TransportTariffDto,
 } from './ai.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { UserRole } from '../entities/user.entity';
 
 @Controller('ai')
 export class AiController {
@@ -428,7 +429,8 @@ if (!image) {
 
   @UseGuards(JwtAuthGuard)
   @Get('audit/weight-adjustments')
-  async getWeightAdjustmentAudit(@Query('limit') limit?: string) {
+  async getWeightAdjustmentAudit(@Req() req: any, @Query('limit') limit?: string) {
+    if (req.user?.role !== UserRole.ADMIN) throw new ForbiddenException('Admin access required');
     try {
       const results = this.aiService.getRecentWeightAdjustmentAudit(Number(limit ?? 20));
       return { ok: true, count: results.length, results };
@@ -440,7 +442,8 @@ if (!image) {
 
   @UseGuards(JwtAuthGuard)
   @Get('audit/staged-vision')
-  async getStagedVisionAudit(@Query('limit') limit?: string) {
+  async getStagedVisionAudit(@Req() req: any, @Query('limit') limit?: string) {
+    if (req.user?.role !== UserRole.ADMIN) throw new ForbiddenException('Admin access required');
     try {
       const results = this.aiService.getRecentStagedVisionAudit(
         Number(limit ?? 20),

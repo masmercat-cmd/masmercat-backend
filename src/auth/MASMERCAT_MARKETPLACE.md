@@ -27,6 +27,8 @@ exponen en perfiles públicos ni en anuncios de forwarders.
 - `POST /marketplace/profile`: crea el perfil del usuario autenticado.
 - `GET /marketplace/profile`: devuelve el perfil propio y sus certificados.
 - `POST /marketplace/certificates`: presenta un certificado para revisión.
+- `POST /upload/certificate`: sube previamente el documento privado y devuelve
+  la referencia interna que debe enviarse como `documentUrl`.
 - `POST /marketplace/certificates/:id/review`: aprobación o rechazo por admin.
 - `GET /marketplace/admin/certificates?status=pending`: cola documental para admin.
 - `GET /marketplace/admin/profiles`: perfiles comerciales completos para admin.
@@ -71,9 +73,14 @@ Ejemplo de certificado:
   "certificateNumber": "GGN-123456789",
   "issuedAt": "2026-01-01",
   "expiresAt": "2027-01-01",
-  "documentUrl": "https://storage.example.com/private/document.pdf"
+  "documentUrl": "s3://masmercat-images/certificates/ID_USUARIO/documento.pdf"
 }
 ```
+
+El cliente no debe construir esa referencia: debe usar exactamente el
+`documentRef` devuelto por `POST /upload/certificate`. Los documentos no deben
+tener acceso público; el backend entrega enlaces firmados de cinco minutos solo
+al titular y a los administradores autorizados.
 
 La entidad `Language` existente ya contiene `es`, `pt`, `en` y `fr`, por lo que
 la API conserva soporte estructural para los cuatro idiomas solicitados.
